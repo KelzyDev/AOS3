@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { AppState, SimulationMode, WorldType, SimulationSession, WikiEntry, SimulationConfig, WorldMeta, ToneType, CanonStrictness, PowerScaling, IntegrationMode, StoryNode, NarrativeStructure, HierarchyTier, DirectorMode, MODEL_OPTIONS, HierarchyEntity, AdaptedEntity, WorldGenerationMode, TimelineEvent, NarrativePOV, NarrativeTense, SimulationType, RoleplayType, ScenarioHook, RoleAssignment } from './types';
 import { WikiImporter } from './components/WikiImporter';
@@ -83,7 +82,10 @@ const INITIAL_DRAFT_CONFIG: SimulationConfig = {
   // Single Fandom Defaults
   roleplayType: RoleplayType.CanonDivergence,
   timeEra: '',
-  roleAssignments: []
+  roleAssignments: [],
+  // Original Fiction Defaults
+  genre: 'Fantasy',
+  worldPremise: ''
 };
 
 // DETERMINISTIC EXTRACTOR HELPER
@@ -497,7 +499,8 @@ const App: React.FC = () => {
   };
 
   const handlePreviewWorld = async (targetSection?: 'timeline' | 'hierarchy' | 'integration') => {
-    if (state.draftConfig.fandoms.length === 0 || state.draftWikiEntries.length <= 2) {
+    // Only force minimums if not Original Fiction (where you start from scratch)
+    if (state.draftConfig.simulationType !== SimulationType.OriginalFiction && (state.draftConfig.fandoms.length === 0 || state.draftWikiEntries.length <= 2)) {
         alert("Please add at least one Fandom and one Wiki Entry/Lore to preview.");
         return;
     }
@@ -1013,11 +1016,20 @@ const App: React.FC = () => {
   };
 
   const handleCreateSimulation = async () => {
-    if (state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom) { alert("Please add at least one Fandom or define a Custom Host Setting."); return; }
+    if (state.draftConfig.simulationType !== SimulationType.OriginalFiction && state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom) { 
+        alert("Please add at least one Fandom or define a Custom Host Setting."); 
+        return; 
+    }
     
     // For single fandom mode, enforce native integration and disable portal logic
     if (state.draftConfig.simulationType === SimulationType.SingleFandom) {
         updateDraftConfig('integrationMode', IntegrationMode.Native);
+        updateDraftConfig('worldType', WorldType.Merged);
+    }
+    
+    // Original Fiction Logic
+    if (state.draftConfig.simulationType === SimulationType.OriginalFiction) {
+        updateDraftConfig('integrationMode', IntegrationMode.Native); // Always native to the new world
         updateDraftConfig('worldType', WorldType.Merged);
     }
 
@@ -1434,9 +1446,12 @@ const App: React.FC = () => {
                                 {sim.config.simulationType === SimulationType.SingleFandom && (
                                     <span className="bg-blue-100 text-blue-800 text-[10px] uppercase font-bold px-2 py-0.5 rounded-none border border-blue-200">RP</span>
                                 )}
+                                {sim.config.simulationType === SimulationType.OriginalFiction && (
+                                    <span className="bg-purple-100 text-purple-800 text-[10px] uppercase font-bold px-2 py-0.5 rounded-none border border-purple-200">OC</span>
+                                )}
                             </div>
                             <div className="flex flex-wrap gap-1 mb-4">
-                                {sim.config.fandoms.slice(0, 3).map(f => (
+                                {(sim.config.simulationType === SimulationType.OriginalFiction ? [sim.config.genre || 'Original'] : sim.config.fandoms.slice(0, 3)).map(f => (
                                     <span key={f} className="text-xs bg-gray-100 border border-gray-300 text-gray-600 px-2 py-1 rounded-none font-ao3-sans">{f}</span>
                                 ))}
                                 {sim.config.fandoms.length > 3 && <span className="text-xs text-gray-400">+{sim.config.fandoms.length - 3}</span>}
@@ -1491,18 +1506,24 @@ const App: React.FC = () => {
                         </h1>
                     </div>
                     {/* Setup Mode Toggle */}
-                    <div className="flex items-center bg-[#770000] rounded-none border border-[#550000]">
+                    <div className="flex items-center bg-[#770000] rounded-none border border-[#550000] overflow-hidden">
                          <button 
                             onClick={() => updateDraftConfig('simulationType', SimulationType.Multifandom)}
-                            className={`px-4 py-1 text-sm font-bold ${state.draftConfig.simulationType === SimulationType.Multifandom ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
+                            className={`px-4 py-1 text-sm font-bold border-r border-[#550000] ${state.draftConfig.simulationType === SimulationType.Multifandom ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
                          >
                             Multifandom Fusion
                          </button>
                          <button 
                             onClick={() => updateDraftConfig('simulationType', SimulationType.SingleFandom)}
-                            className={`px-4 py-1 text-sm font-bold ${state.draftConfig.simulationType === SimulationType.SingleFandom ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
+                            className={`px-4 py-1 text-sm font-bold border-r border-[#550000] ${state.draftConfig.simulationType === SimulationType.SingleFandom ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
                          >
                             Single-Fandom RP
+                         </button>
+                         <button 
+                            onClick={() => updateDraftConfig('simulationType', SimulationType.OriginalFiction)}
+                            className={`px-4 py-1 text-sm font-bold ${state.draftConfig.simulationType === SimulationType.OriginalFiction ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
+                         >
+                            Original Fiction / IP
                          </button>
                     </div>
                     <div className="flex items-center gap-3">
@@ -1515,7 +1536,7 @@ const App: React.FC = () => {
                         </button>
                         <button 
                             onClick={handleCreateSimulation} 
-                            disabled={state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom}
+                            disabled={state.draftConfig.simulationType !== SimulationType.OriginalFiction && state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom}
                             className="bg-white text-[#990000] px-6 py-2 font-bold hover:bg-gray-100 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed rounded-none shadow-sm transition-colors"
                         >
                             <Sparkles size={18} /> {state.draftSessionId ? "Update" : "Start"}
@@ -1533,10 +1554,55 @@ const App: React.FC = () => {
                                     type="text" 
                                     value={state.draftConfig.title} 
                                     onChange={(e) => updateDraftConfig('title', e.target.value)}
-                                    placeholder={state.draftConfig.simulationType === SimulationType.SingleFandom ? "My Hero Academia: Vigilantes AU" : "The Avengers meet Sherlock Holmes"}
+                                    placeholder={
+                                        state.draftConfig.simulationType === SimulationType.OriginalFiction ? "Chronicles of Aetheria" :
+                                        state.draftConfig.simulationType === SimulationType.SingleFandom ? "My Hero Academia: Vigilantes AU" : "The Avengers meet Sherlock Holmes"
+                                    }
                                     className="w-full p-2 border border-gray-300 font-ao3-serif text-lg bg-white focus:border-[#990000] outline-none rounded-none shadow-inner"
                                 />
                             </div>
+
+                            {/* --- ORIGINAL FICTION SETUP --- */}
+                            {state.draftConfig.simulationType === SimulationType.OriginalFiction && (
+                                <div className="bg-purple-50 border border-purple-200 p-4 rounded-none space-y-4">
+                                    <div className="flex items-center gap-2 mb-2 text-purple-900 border-b border-purple-200 pb-2">
+                                        <Hammer size={18}/>
+                                        <h3 className="font-bold">World Genesis Configuration</h3>
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">Genre Archetype</label>
+                                        <input 
+                                            type="text"
+                                            list="genre-suggestions"
+                                            value={state.draftConfig.genre}
+                                            onChange={(e) => updateDraftConfig('genre', e.target.value)}
+                                            className="w-full p-2 border border-gray-300 bg-white rounded-none focus:border-[#990000] outline-none shadow-inner"
+                                            placeholder="e.g. Cyberpunk Noir"
+                                        />
+                                        <datalist id="genre-suggestions">
+                                            <option value="High Fantasy"/>
+                                            <option value="Cyberpunk"/>
+                                            <option value="Space Opera"/>
+                                            <option value="Urban Fantasy"/>
+                                            <option value="Cosmic Horror"/>
+                                            <option value="Regency Romance"/>
+                                            <option value="Post-Apocalyptic"/>
+                                        </datalist>
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">World Premise (The Bible)</label>
+                                        <textarea 
+                                            value={state.draftConfig.worldPremise}
+                                            onChange={(e) => updateDraftConfig('worldPremise', e.target.value)}
+                                            placeholder="Describe the core concept. E.g. 'A world where the sun died, and humanity lives in giant glass domes powered by bioluminescent fungi. Society is divided by which fungus they farm.'"
+                                            className="w-full p-2 border border-gray-300 h-32 bg-white focus:border-[#990000] outline-none text-sm rounded-none shadow-inner"
+                                        />
+                                        <p className="text-xs text-gray-500 mt-1">This premise will be the absolute truth for all AI generation.</p>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* --- MULTIFANDOM SETUP --- */}
                             {state.draftConfig.simulationType === SimulationType.Multifandom && (
@@ -1824,6 +1890,10 @@ const App: React.FC = () => {
                                 library={state.library}
                                 onAddToLibrary={handleAddToLibrary}
                                 onRemoveFromLibrary={handleRemoveFromLibrary}
+                                // Pass Context props
+                                simulationType={state.draftConfig.simulationType}
+                                genre={state.draftConfig.genre}
+                                worldPremise={state.draftConfig.worldPremise}
                            />
                            
                            {/* World Logic Preview (Only show in Multifandom for now, or simplify for single) */}
@@ -2078,12 +2148,12 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* View: Simulation */}
+        {/* --- VIEW: SIMULATION --- */}
         {state.view === 'simulation' && currentSession && (
-            <SimulationReader 
+            <SimulationReader
                 session={currentSession}
                 onUpdateSession={handleUpdateCurrentSession}
-                onExit={() => setState(prev => ({ ...prev, view: 'dashboard', currentSessionId: null }))}
+                onExit={() => setState(prev => ({ ...prev, currentSessionId: null, view: 'dashboard' }))}
                 isGenerating={state.isGenerating}
                 setIsGenerating={(val) => setState(prev => ({ ...prev, isGenerating: val }))}
                 onForkSession={handleForkSession}
@@ -2093,106 +2163,6 @@ const App: React.FC = () => {
                 onQuotaExhausted={handleQuotaExhausted}
             />
         )}
-      
-      {/* Integration Edit Modal */}
-      {viewingAdaptationId && editAdaptationValues && (
-          <div ref={integrationDetailRef} className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-              <div className="bg-white max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl rounded-none border border-gray-400">
-                  <div className="p-4 border-b border-[#770000] flex justify-between items-center bg-[#990000] text-white">
-                      <h3 className="font-ao3-serif text-lg font-bold">Edit Integration Details</h3>
-                      <button onClick={() => setViewingAdaptationId(null)} className="text-white hover:bg-[#770000] p-1 rounded-none"><X size={20}/></button>
-                  </div>
-                  
-                  <div className="flex-1 overflow-y-auto p-6 bg-gray-50 space-y-4">
-                      {/* AI Adapt Section */}
-                      <div className="bg-white p-3 border border-gray-300 shadow-sm">
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1">
-                              <Sparkles size={12} className="text-[#990000]"/> AI Re-Adaptation
-                          </label>
-                          <div className="flex gap-2">
-                              <input 
-                                  type="text" 
-                                  className="flex-1 p-2 border border-gray-300 text-sm bg-white focus:bg-white outline-none focus:border-[#990000]"
-                                  placeholder="e.g. 'Make them a cyborg'"
-                                  value={aiAdaptPrompt}
-                                  onChange={(e) => setAiAdaptPrompt(e.target.value)}
-                                  onKeyDown={(e) => e.key === 'Enter' && handleAiAdapt()}
-                              />
-                              <button 
-                                  onClick={handleAiAdapt}
-                                  disabled={isAiAdapting || !aiAdaptPrompt.trim()}
-                                  className="bg-gray-800 text-white px-3 py-1 text-xs font-bold hover:bg-gray-900 disabled:opacity-50"
-                              >
-                                  {isAiAdapting ? <Loader2 className="animate-spin" size={14}/> : 'Auto-Adapt'}
-                              </button>
-                          </div>
-                      </div>
-
-                      {/* Manual Fields */}
-                      <div>
-                          <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Adapted Name</label>
-                          <input 
-                              type="text" 
-                              className="w-full p-2 border border-gray-300 text-sm bg-white focus:border-[#990000] outline-none font-bold"
-                              value={editAdaptationValues.adaptedName}
-                              onChange={(e) => setEditAdaptationValues({...editAdaptationValues, adaptedName: e.target.value})}
-                          />
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-4">
-                          <div>
-                              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Role</label>
-                              <input 
-                                  type="text" 
-                                  className="w-full p-2 border border-gray-300 text-sm bg-white focus:border-[#990000] outline-none"
-                                  value={editAdaptationValues.role}
-                                  onChange={(e) => setEditAdaptationValues({...editAdaptationValues, role: e.target.value})}
-                              />
-                          </div>
-                          <div>
-                              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Status</label>
-                              <input 
-                                  type="text" 
-                                  className="w-full p-2 border border-gray-300 text-sm bg-white focus:border-[#990000] outline-none"
-                                  value={editAdaptationValues.status}
-                                  onChange={(e) => setEditAdaptationValues({...editAdaptationValues, status: e.target.value})}
-                              />
-                          </div>
-                      </div>
-
-                      <div>
-                          <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Whereabouts</label>
-                          <input 
-                              type="text" 
-                              className="w-full p-2 border border-gray-300 text-sm bg-white focus:border-[#990000] outline-none"
-                              value={editAdaptationValues.whereabouts}
-                              onChange={(e) => setEditAdaptationValues({...editAdaptationValues, whereabouts: e.target.value})}
-                          />
-                      </div>
-
-                      <div>
-                          <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Description & Integration Lore</label>
-                          <textarea 
-                              className="w-full p-2 border border-gray-300 text-sm h-32 bg-white focus:border-[#990000] outline-none font-ao3-serif leading-relaxed"
-                              value={editAdaptationValues.description}
-                              onChange={(e) => setEditAdaptationValues({...editAdaptationValues, description: e.target.value})}
-                          />
-                      </div>
-                  </div>
-
-                  <div className="p-4 border-t border-gray-300 bg-gray-100 flex justify-end gap-2">
-                      <button onClick={() => setViewingAdaptationId(null)} className="px-4 py-2 text-sm font-bold text-gray-600 hover:text-gray-800">Cancel</button>
-                      <button 
-                          onClick={() => { handleSaveAdaptation(); setViewingAdaptationId(null); }} 
-                          className="bg-[#990000] text-white px-4 py-2 text-sm font-bold hover:bg-[#770000] shadow-sm flex items-center gap-2"
-                      >
-                          <Save size={16}/> Save Changes
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
-
       </div>
   );
 };

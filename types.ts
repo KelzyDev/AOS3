@@ -6,7 +6,8 @@ export enum SimulationMode {
 
 export enum SimulationType {
   Multifandom = 'MULTIFANDOM',
-  SingleFandom = 'SINGLE_FANDOM'
+  SingleFandom = 'SINGLE_FANDOM',
+  OriginalFiction = 'ORIGINAL_FICTION' // New: Worldbuilding / IP Sim
 }
 
 export enum RoleplayType {
@@ -120,7 +121,7 @@ export interface RoleAssignment {
 
 export interface SimulationConfig {
   title: string;
-  simulationType: SimulationType; // NEW: Multi vs Single
+  simulationType: SimulationType; // Multi, Single, or Original
   fandoms: string[];
   hostFandom?: string; // The primary setting/world that dominates physics/history
   worldType: WorldType;
@@ -133,6 +134,10 @@ export interface SimulationConfig {
   roleplayType?: RoleplayType;
   timeEra?: string; // e.g. "Modern Day", "1800s"
   roleAssignments?: RoleAssignment[]; // Map characters to archetypes
+
+  // Original Fiction Specifics
+  genre?: string; // e.g. "Cyberpunk", "High Fantasy"
+  worldPremise?: string; // The seed prompt for the world
 
   // Advanced Engine Settings
   tone: ToneType;

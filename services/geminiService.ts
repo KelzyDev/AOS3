@@ -236,6 +236,97 @@ export const scanWikiUrl = async (
   }
 };
 
+/**
+ * FABRICATE ENTITY (For Original Fiction / IP Sim Mode)
+ * Creates a brand new entity from scratch based on the world premise.
+ */
+export const fabricateEntity = async (
+    prompt: string,
+    category: WikiEntry['category'],
+    genre: string,
+    worldPremise: string,
+    model: string,
+    signal: AbortSignal
+): Promise<{ content: string; name: string; fandom: string }> => {
+    const systemPrompt = `
+        You are an Advanced World-Building Engine (Genesis Module).
+        
+        **TASK:** Create a completely original, detailed database entry for a ${category}.
+        
+        **WORLD CONTEXT (THE BIBLE):**
+        - **Genre:** ${genre}
+        - **Premise:** ${worldPremise}
+        
+        **USER REQUEST:** "${prompt}"
+        
+        **GUIDELINES:**
+        1. **Deep Integration:** The entity must fit perfectly into the established genre and premise. Use the specific terminology implied by the premise (e.g., if the world has "Aether", the character uses Aether, not generic magic).
+        2. **Consistency:** Ensure the technology level, magic system, and social structure match the world.
+        3. **Detailed Output:** Include sensory details, history, secrets, and relationships.
+        
+        **OUTPUT FORMAT:**
+        Return a VALID JSON object matching the standard schema used for imports.
+    `;
+
+    const entrySchema = {
+        type: Type.OBJECT,
+        properties: {
+            detectedName: { type: Type.STRING, description: "The name of the entity." },
+            emoji: { type: Type.STRING, description: "A single emoji representing the entity." },
+            metadata: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        key: { type: Type.STRING, description: "Label (e.g. Class, Origin)" },
+                        value: { type: Type.STRING, description: "Value" }
+                    }
+                }
+            },
+            sections: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING, description: "Section header" },
+                        content: { type: Type.STRING, description: "Paragraph content (Markdown)." }
+                    }
+                }
+            }
+        },
+        required: ["detectedName", "emoji", "metadata", "sections"]
+    };
+
+    const ai = getAiClient();
+    try {
+        const response = await withRetry(async () => ai.models.generateContent({
+            model,
+            contents: `Fabricate: ${prompt}`,
+            config: {
+                systemInstruction: systemPrompt,
+                responseMimeType: "application/json",
+                responseSchema: entrySchema
+            }
+        }));
+
+        const json = repairJson(response.text || "{}");
+        const formattedContent = formatEntryToMarkdown(json);
+
+        return {
+            content: formattedContent || "Fabrication failed.",
+            name: json.detectedName || "Unknown Entity",
+            fandom: genre || "Original Fiction"
+        };
+    } catch (e: any) {
+        if (e.name === 'AbortError') throw e;
+        throw new Error("Failed to fabricate entity.");
+    }
+};
+
+/**
+ * REFACTORED: Analyze Wiki Content with Structured JSON Schema.
+ * Uses strict schema validation to ensure high-quality headers and metadata extraction.
+ */
 export const analyzeWikiContent = async (
   input: string,
   category: WikiEntry['category'],
@@ -243,118 +334,146 @@ export const analyzeWikiContent = async (
   signal: AbortSignal,
   mode: 'link' | 'text' | 'search' = 'link',
   modifiers?: string
-): Promise<{ content: string; fandom?: string }> => {
+): Promise<{ content: string; fandom?: string; name: string }> => {
   
-  let systemInstruction = '';
-
-  if (category === 'Character') {
-    systemInstruction = `
-      Analyze the input and generate a Character Bio strictly in the following format. 
-      If specific details are missing, infer them based on the context or mark as 'Unknown'.
-      
-      Output Format:
-      [Emoji representing species/vibe] [Name]
-
-      Full Canon Name: ...
-      Species: ...
-      Age: ...
-      Fandom Origin: ...
-      Pronouns: ...
-      Gender & Orientation: ...
-      Status: ...
-      
-      Nicknames/Aliases: ...
-
-      Appearance:
-      [Detailed physical description]
-
-      Backstory:
-      [Summary of history relevant to their current state]
-
-      Personality:
-      [Traits, fears, coping mechanisms, quirks]
-
-      Relationships:
-      [List key relationships and their dynamic]
-
-      Likes:
-      ...
-
-      Dislikes:
-      ...
-
-      Notes:
-      [Important lore notes, mental health status, inventory, or key abilities]
-    `;
-  } else {
-    systemInstruction = `
-       Analyze the content regarding a ${category}.
-       1. Identify the Source Material / Fandom Name.
-       2. Summarize the key details relevant for a roleplay simulation (physical description, history, rules).
-       
-       output format:
-       FANDOM: [Fandom Name]
-       CONTENT: [Detailed Summary]
-    `;
-  }
+  const isChar = category === 'Character';
   
-  if (modifiers) {
-      systemInstruction += `\n\n**CRITICAL USER OVERRIDES / MODIFIERS:**\nThe user has explicitly requested the following changes to the canonical information. You MUST apply these changes to the generated output, rewriting history/personality as needed to fit this new truth:\n"${modifiers}"`;
-  }
+  // 1. Construct System Prompt based on Category
+  const systemPrompt = `
+    You are an Advanced Multiverse Archivist.
+    
+    **TASK:** Analyze the input and generate a highly detailed, structured database entry for a ${category}.
+    
+    **CATEGORY GUIDANCE:**
+    ${isChar ? 
+      `- **FOCUS:** Personality (Psychological profile, fears, desires), Appearance (Sensory details), Abilities/Powers (Rules, limits), Backstory (Key trauma/events), and Relationships.
+       - **METADATA:** Full Canon Name, Species, Age, Gender, Pronouns, Sexual Orientation, Fandom Origin, Affiliation.` :
+      `- **FOCUS:** Visual Description (Atmosphere, sensory details), History/Lore, Significance to the world, Inhabitants/Factions, and Geography/Layout.
+       - **METADATA:** Official Name, Type (City, Planet, Artifact, Event), Location/Region, Era, Fandom Origin.`
+    }
 
-  let fullPrompt = '';
+    **USER MODIFIERS (CRITICAL OVERRIDES):**
+    ${modifiers ? `The user has explicitly requested: "${modifiers}". \n   **RULE:** You MUST incorporate these changes. If the modifier contradicts canon (e.g. "Make them evil"), the modifier WINS. Rewrite the entry to reflect this new truth.` : "None. Stick strictly to canon information."}
+
+    **OUTPUT FORMAT:**
+    Return a VALID JSON object. Do not return Markdown text directly.
+  `;
+
+  // 2. Construct User Prompt
+  let promptContext = "";
   let tools: any[] = [];
-
+  
   if (mode === 'link') {
-    fullPrompt = `${systemInstruction} \n\n Analyze the content from this link provided by the user. Support Fandom, Miraheze, and standard Wikis.`;
-    tools = [{ googleSearch: {} }];
+      promptContext = `Analyze the content at this URL: ${input}`;
+      tools = [{ googleSearch: {} }];
   } else if (mode === 'search') {
-    fullPrompt = `${systemInstruction} \n\n The user has provided a search query. Use Google Search to find relevant wikis (prioritize Fandom/Miraheze) about "${input}" and generate the entry. Ensure accuracy unless User Overrides dictate otherwise.`;
-    tools = [{ googleSearch: {} }];
+      promptContext = `Search the web for "${input}" (Focus on ${category} details). Prioritize Fandom/Wikia/Miraheze sources.`;
+      tools = [{ googleSearch: {} }];
   } else {
-    fullPrompt = `${systemInstruction} \n\n Analyze the following text provided by the user.`;
+      promptContext = `Analyze this raw text: "${input}"`;
   }
+
+  // 3. Define Schema
+  const entrySchema = {
+    type: Type.OBJECT,
+    properties: {
+        detectedName: { type: Type.STRING, description: "The official name of the entity." },
+        detectedFandom: { type: Type.STRING, description: "The source material/universe." },
+        emoji: { type: Type.STRING, description: "A single emoji representing the entity." },
+        metadata: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    key: { type: Type.STRING, description: "Label (e.g. Species, Age)" },
+                    value: { type: Type.STRING, description: "Value (e.g. Human, 25)" }
+                }
+            },
+            description: "Key-value pairs for the top summary section."
+        },
+        sections: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    title: { type: Type.STRING, description: "Section header (e.g. Appearance, Personality)" },
+                    content: { type: Type.STRING, description: "Detailed paragraph content in Markdown format." }
+                }
+            },
+            description: "The main body content divided into logical sections."
+        }
+    },
+    required: ["detectedName", "detectedFandom", "emoji", "metadata", "sections"]
+  };
 
   const ai = getAiClient();
+  
   try {
     const response = await withRetry(async () => ai.models.generateContent({
       model,
-      contents: input,
+      contents: promptContext,
       config: {
-        systemInstruction: fullPrompt,
-        tools: tools, 
+        systemInstruction: systemPrompt,
+        tools: tools,
+        responseMimeType: "application/json",
+        responseSchema: entrySchema
       }
     }));
 
-    let text = response.text || "";
+    const json = repairJson(response.text || "{}");
     
-    if (!text && (mode === 'link' || mode === 'search') && response.candidates?.[0]?.groundingMetadata?.groundingChunks) {
-        text = "Content extracted via search grounding. (Please review entry).";
-    }
+    // 4. Format JSON to Markdown String (for legacy app compatibility and easy editing)
+    const formattedContent = formatEntryToMarkdown(json);
     
-    const fandomMatch = text.match(/^FANDOM:\s*(.+)$/m) || text.match(/Fandom Origin:\s*(.+)$/m);
-    const contentMatch = text.match(/^CONTENT:\s*([\s\S]*)$/m);
-
-    const fandom = fandomMatch ? fandomMatch[1].trim() : undefined;
-    let content = contentMatch ? contentMatch[1].trim() : text;
-    
-    if (fandomMatch && !contentMatch && category !== 'Character') {
-        content = text.replace(fandomMatch[0], '').trim();
-    }
-
-    const finalFandom = (fandom && fandom.toLowerCase() !== 'unknown') ? fandom : undefined;
-
     return {
-        content: content || "No content generated.",
-        fandom: finalFandom
+        content: formattedContent || "No content generated.",
+        fandom: json.detectedFandom,
+        name: json.detectedName || input
     };
 
   } catch (error: any) {
     if (error.name === 'AbortError') throw error;
     console.error("Wiki extraction failed:", error);
-    throw new Error("Failed to analyze wiki content. Please try again or paste text manually.");
+    
+    // Fallback for quota issues or severe model failures
+    throw new Error("Failed to analyze wiki content. Please check your API key quota or try a different model.");
   }
 };
+
+/**
+ * Helper to convert the structured JSON entry back into the App's standard Markdown format.
+ */
+function formatEntryToMarkdown(json: any): string {
+    if (!json) return "";
+    
+    let md = "";
+    
+    // Header
+    if (json.emoji) md += `${json.emoji} `;
+    if (json.detectedName) md += `${json.detectedName}\n\n`;
+    
+    // Metadata Block
+    if (json.metadata && Array.isArray(json.metadata)) {
+        json.metadata.forEach((item: any) => {
+            if (item.key && item.value) {
+                md += `**${item.key}:** ${item.value}\n`;
+            }
+        });
+    }
+    
+    md += "\n";
+    
+    // Sections
+    if (json.sections && Array.isArray(json.sections)) {
+        json.sections.forEach((sec: any) => {
+            if (sec.title && sec.content) {
+                md += `### ${sec.title}\n${sec.content}\n\n`;
+            }
+        });
+    }
+    
+    return md.trim();
+}
 
 /**
  * Modifies an existing wiki entry name and content based on user prompts.
@@ -529,15 +648,29 @@ export const generateWorldMeta = async (
       sectionInstruction = "**TARGET: INTEGRATION.** Focus on creating deep AdaptedEntity profiles. Return Timeline and Hierarchy EXACTLY as they are.";
   }
 
+  // ORIGIAL FICTION MODE OVERRIDE
+  let hostSettingPrompt = "";
+  if (config.simulationType === SimulationType.OriginalFiction) {
+      hostSettingPrompt = `
+      **MODE: ORIGINAL FICTION GENESIS**
+      - **Genre:** ${config.genre}
+      - **World Premise (THE BIBLE):** ${config.worldPremise}
+      - All entities must be perfectly integrated into this specific original world.
+      - Ignore "Fandoms". Treat the 'Premise' as the only canon.
+      `;
+  } else {
+      hostSettingPrompt = config.hostFandom ? `Primary Laws/Physics: **${config.hostFandom}**.` : "Fused World: All fandoms are merged equally.";
+  }
+
   let prompt = `
     You are a Worldbuilding Engine and Integration Harmonizer.
     
     **Task:**
-    1. Create/Update a cohesive Timeline and Power Hierarchy for a ${config.worldType} simulation involving: ${(config.fandoms || []).join(', ')}.
-    2. **ADAPT ENTITIES**: Generate/Update "Integration Manifest" for *every* provided WikiEntry to fit the ${config.hostFandom || 'hybrid'} world logic.
+    1. Create/Update a cohesive Timeline and Power Hierarchy for a ${config.worldType} simulation.
+    2. **ADAPT ENTITIES**: Generate/Update "Integration Manifest" for *every* provided WikiEntry to fit the world logic.
 
     **HOST WORLD / SETTING:**
-    ${config.hostFandom ? `Primary Laws/Physics: **${config.hostFandom}**.` : "Fused World: All fandoms are merged equally."}
+    ${hostSettingPrompt}
 
     **INTEGRATION LOGIC (STRICT):**
     ${integrationInstruction}
@@ -951,6 +1084,13 @@ export const generateSimulationBriefing = async (
                 return `- ROLE: ${r.roleName} -> PLAYED BY: ${char?.name || "Unknown"} (${r.description || ""})`;
             }).join('\n') || "No specific roles assigned."}
         `;
+    } else if (config.simulationType === SimulationType.OriginalFiction) {
+        integrationInstruction = `
+            **MODE: ORIGINAL FICTION (IP SIM)**
+            - **Genre:** ${config.genre || "Original"}
+            - **Premise:** ${config.worldPremise || "Original World"}
+            - **NATIVE INTEGRATION ENFORCED**: All characters are native to this original world. NO multiverse.
+        `;
     } else {
          integrationInstruction = config.integrationMode === IntegrationMode.Native
         ? `**NATIVE INTEGRATION ENFORCED**: All characters are NATIVES of the ${config.hostFandom} world. Backstories rewritten. NO Multiverse.`
@@ -963,9 +1103,9 @@ export const generateSimulationBriefing = async (
     ).join('\n') : "";
 
     const systemPrompt = `
-      You are the Gamemaster/Director for a ${config.simulationType === SimulationType.SingleFandom ? 'Single-Fandom Roleplay' : 'Multifandom Simulation'}.
+      You are the Gamemaster/Director for a ${config.simulationType === SimulationType.SingleFandom ? 'Single-Fandom Roleplay' : config.simulationType === SimulationType.OriginalFiction ? 'Original Fiction Simulation' : 'Multifandom Simulation'}.
       **TASK:** Initialize the simulation by creating a compelling "Situation Overview".
-      **Fandoms:** ${(config.fandoms || []).join(', ')}
+      **Fandoms:** ${config.simulationType === SimulationType.OriginalFiction ? "Original World (See Premise)" : (config.fandoms || []).join(', ')}
       **Integration:** ${integrationInstruction}
       
       **ADAPTED ROLES (STRICTLY FOLLOW THESE):**
@@ -1043,6 +1183,11 @@ export const generateStorySegment = async (
        integrationInstruction = `**SINGLE FANDOM MODE**: ${config.fandoms[0]} (${config.timeEra || 'Canonical'}).
        Roleplay Type: ${config.roleplayType}.
        Do NOT cross over into other fandoms. Keep it contained.`;
+  } else if (config.simulationType === SimulationType.OriginalFiction) {
+       integrationInstruction = `**ORIGINAL FICTION MODE**:
+       - Genre: ${config.genre}
+       - Premise: ${config.worldPremise}
+       - **RULE:** Do NOT use existing IP/Fandoms. This is a standalone original world. Use only the provided Lore/Characters.`;
   } else {
        integrationInstruction = config.integrationMode === IntegrationMode.Native
         ? `**NATIVE INTEGRATION**: Characters are NATIVES of the ${config.hostFandom} world. NO multiverse references.`

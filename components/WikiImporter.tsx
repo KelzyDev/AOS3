@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { WikiEntry, MODEL_OPTIONS } from '../types';
-import { analyzeWikiContent, scanWikiUrl, modifyEntryWithAI, DiscoveredEntity } from '../services/geminiService';
-import { Loader2, Plus, Globe, FileText, CheckCircle2, User, Map, X, Info, Trash2, Edit2, Save, Bookmark, BookOpen, Search, Radar, ArrowRight, ArrowLeft, ChevronRight, ChevronLeft, RefreshCw, History, ExternalLink, Cpu, CheckSquare, Square, Wand2, GripVertical, Filter, Play, Pause, AlertCircle, ListPlus, Clock } from 'lucide-react';
+import { WikiEntry, MODEL_OPTIONS, SimulationType } from '../types';
+import { analyzeWikiContent, scanWikiUrl, modifyEntryWithAI, DiscoveredEntity, fabricateEntity } from '../services/geminiService';
+import { Loader2, Plus, Globe, FileText, CheckCircle2, User, Map, X, Info, Trash2, Edit2, Save, Bookmark, BookOpen, Search, Radar, ArrowRight, ArrowLeft, ChevronRight, ChevronLeft, RefreshCw, History, ExternalLink, Cpu, CheckSquare, Square, Wand2, GripVertical, Filter, Play, Pause, AlertCircle, ListPlus, Clock, Hammer } from 'lucide-react';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 
 interface WikiImporterProps {
@@ -17,13 +18,17 @@ interface WikiImporterProps {
   library: WikiEntry[];
   onAddToLibrary: (entry: WikiEntry) => void;
   onRemoveFromLibrary: (id: string) => void;
+  // New props for Original Fiction context
+  simulationType?: SimulationType;
+  genre?: string;
+  worldPremise?: string;
 }
 
 interface QueueItem {
   id: string;
   type: 'character' | 'lore';
   category: WikiEntry['category'];
-  mode: 'link' | 'text' | 'search';
+  mode: 'link' | 'text' | 'search' | 'fabricate';
   input: string;
   name: string;
   modifier: string;
@@ -189,15 +194,22 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
   existingEntries,
   library,
   onAddToLibrary,
-  onRemoveFromLibrary
+  onRemoveFromLibrary,
+  simulationType = SimulationType.Multifandom,
+  genre = "Original",
+  worldPremise = ""
 }) => {
-  const [activeTab, setActiveTab] = useState<'character' | 'lore' | 'scanner' | 'library'>('character');
-  const [mode, setMode] = useState<'link' | 'text' | 'search'>('link');
+  const [activeTab, setActiveTab] = useState<'character' | 'lore' | 'scanner' | 'library' | 'fabricator'>('character');
+  const [mode, setMode] = useState<'link' | 'text' | 'search' | 'fabricate'>('link');
   const [inputVal, setInputVal] = useState('');
   const [name, setName] = useState('');
   const [loreCategory, setLoreCategory] = useState<WikiEntry['category']>('World');
   const [modifier, setModifier] = useState('');
   
+  // Fabricator State
+  const [fabricateCategory, setFabricateCategory] = useState<WikiEntry['category']>('Character');
+  const [fabricatePrompt, setFabricatePrompt] = useState('');
+
   // Scanner State
   const [selectedModel, setSelectedModel] = useState(model);
   const [scanUrl, setScanUrl] = useState('');
@@ -239,6 +251,13 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
   useEffect(() => {
     setSelectedModel(model);
   }, [model]);
+  
+  // Auto-switch to Fabricator if Original Fiction
+  useEffect(() => {
+      if (simulationType === SimulationType.OriginalFiction && activeTab === 'scanner') {
+          setActiveTab('fabricator');
+      }
+  }, [simulationType]);
 
   // --- QUEUE PROCESSING EFFECT ---
   useEffect(() => {
@@ -264,16 +283,26 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
         abortControllerRef.current = controller;
 
         try {
-            // Call API
-            const result = await analyzeWikiContent(item.input, item.category, selectedModel, controller.signal, item.mode, item.modifier);
+            let result;
+            
+            if (item.mode === 'fabricate') {
+                // Call Fabricate Service
+                 result = await fabricateEntity(
+                    item.input, 
+                    item.category, 
+                    genre, 
+                    worldPremise, 
+                    selectedModel, 
+                    controller.signal
+                 );
+            } else {
+                 // Call Standard Analysis
+                 result = await analyzeWikiContent(item.input, item.category, selectedModel, controller.signal, item.mode, item.modifier);
+            }
             
             // Name refinement logic
-            let finalName = item.name || item.input;
-            if (item.mode === 'search' && item.category === 'Character') {
-                 const nameMatch = result.content.match(/Full Canon Name:\s*(.+)/);
-                 if (nameMatch && nameMatch[1]) finalName = nameMatch[1].trim();
-            }
-
+            let finalName = item.name || result.name || item.input;
+            
             const newEntry: WikiEntry = {
                 id: crypto.randomUUID(),
                 name: finalName,
@@ -287,7 +316,7 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
             if (result.fandom && onFandomDetected) onFandomDetected(result.fandom);
 
             // Mark completed
-            setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'completed' } : q));
+            setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'completed', name: finalName } : q));
 
         } catch (err: any) {
              if (err.name === 'AbortError') return;
@@ -306,7 +335,7 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
     };
 
     processNext();
-  }, [queue, isQueueRunning, selectedModel, onImport, onFandomDetected]);
+  }, [queue, isQueueRunning, selectedModel, onImport, onFandomDetected, genre, worldPremise]);
 
   // Suggestions for autocomplete (mix of existing + library)
   const allKnownNames = Array.from(new Set([...existingEntries, ...library].map(e => e.name)));
@@ -321,14 +350,14 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
     setError("Operation cancelled.");
   };
 
-  const handleAddToQueue = (overrideName?: string, overrideInput?: string, overrideCategory?: WikiEntry['category'], overrideMode?: 'search' | 'link', overrideModifier?: string) => {
+  const handleAddToQueue = (overrideName?: string, overrideInput?: string, overrideCategory?: WikiEntry['category'], overrideMode?: 'search' | 'link' | 'fabricate', overrideModifier?: string) => {
     const nameToUse = overrideName || name;
     const inputToUse = overrideInput || inputVal;
     const catToUse = overrideCategory || (activeTab === 'character' ? 'Character' : loreCategory);
     const modeToUse = overrideMode || mode;
     const modifierToUse = overrideModifier !== undefined ? overrideModifier : modifier;
 
-    if (!inputToUse.trim() || (!nameToUse.trim() && modeToUse !== 'search')) return;
+    if (!inputToUse.trim() || (!nameToUse.trim() && modeToUse !== 'search' && modeToUse !== 'fabricate')) return;
 
     const newItem: QueueItem = {
         id: crypto.randomUUID(),
@@ -351,6 +380,27 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
         setName('');
         setModifier('');
     }
+  };
+  
+  // Fabricator Specific Add
+  const handleAddFabrication = () => {
+      if (!fabricatePrompt.trim()) return;
+      
+      const newItem: QueueItem = {
+        id: crypto.randomUUID(),
+        type: fabricateCategory === 'Character' ? 'character' : 'lore',
+        category: fabricateCategory,
+        mode: 'fabricate',
+        input: fabricatePrompt,
+        name: '', // Auto-generated
+        modifier: '',
+        status: 'queued',
+        timestamp: Date.now()
+    };
+    
+    setQueue(prev => [...prev, newItem]);
+    setIsQueueRunning(true);
+    setFabricatePrompt('');
   };
 
   const handleBulkAddFromScanner = async () => {
@@ -478,6 +528,10 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
       handleAddToQueue();
     }
   };
+  
+  const handleFabricateKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') handleAddFabrication();
+  };
 
   const openEntry = (entry: WikiEntry) => {
     setSelectedEntry(entry);
@@ -548,21 +602,32 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
     <>
       <div className="bg-white border border-gray-300 shadow-sm mb-6 relative rounded-none">
         <div className="flex border-b border-gray-200 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('character')}
-            className={`flex-items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'character' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
-            <User size={16} /> Add Character
-          </button>
-          <button
-            onClick={() => setActiveTab('lore')}
-            className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'lore' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
-            <Map size={16} /> Add World/Lore
-          </button>
-          <button
-            onClick={() => setActiveTab('scanner')}
-            className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'scanner' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
-            <Radar size={16} /> Fandom Scanner
-          </button>
+          {simulationType !== SimulationType.OriginalFiction && (
+              <>
+                  <button
+                    onClick={() => setActiveTab('character')}
+                    className={`flex-items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'character' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
+                    <User size={16} /> Add Character
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('lore')}
+                    className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'lore' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
+                    <Map size={16} /> Add World/Lore
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('scanner')}
+                    className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'scanner' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
+                    <Radar size={16} /> Fandom Scanner
+                  </button>
+              </>
+          )}
+          {simulationType === SimulationType.OriginalFiction && (
+               <button
+                onClick={() => setActiveTab('fabricator')}
+                className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'fabricator' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
+                <Hammer size={16} /> Entity Fabricator
+              </button>
+          )}
           <button
             onClick={() => setActiveTab('library')}
             className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'library' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
@@ -586,6 +651,67 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
                 </select>
             </div>
         </div>
+        
+        {/* --- FABRICATOR TAB (NEW) --- */}
+        {activeTab === 'fabricator' && (
+            <div className="p-6">
+                <div className="bg-blue-50 border border-blue-200 p-4 mb-4 text-sm text-gray-700 rounded-none">
+                    <p className="font-bold flex items-center gap-2 mb-1 text-blue-800"><Hammer size={14}/> World Genesis Mode</p>
+                    <p>
+                        Instead of scanning existing wikis, use this tool to generate completely original entities that fit your 
+                        <span className="font-bold text-gray-900 mx-1">"{genre || 'Original'}"</span> world premise.
+                    </p>
+                </div>
+
+                <div className="flex flex-col gap-4">
+                    <div className="flex gap-4 items-center">
+                        <label className="text-sm font-bold text-gray-700">Type:</label>
+                        <select
+                            value={fabricateCategory}
+                            onChange={(e) => setFabricateCategory(e.target.value as WikiEntry['category'])}
+                            className="p-2 border border-gray-300 bg-white rounded-none focus:border-[#990000] outline-none shadow-inner"
+                        >
+                            <option value="Character">Character</option>
+                            <option value="World">Location</option>
+                            <option value="Lore">History / Lore</option>
+                            <option value="Faction">Faction / Group</option>
+                            <option value="Species">Species</option>
+                            <option value="Facility">Facility / Artifact</option>
+                        </select>
+                    </div>
+
+                    <div>
+                         <label className="block text-sm font-bold text-gray-700 mb-1">Fabrication Prompt</label>
+                         <input 
+                            type="text"
+                            value={fabricatePrompt}
+                            onChange={(e) => setFabricatePrompt(e.target.value)}
+                            onKeyDown={handleFabricateKeyDown}
+                            placeholder={
+                                fabricateCategory === 'Character' ? "A cynical detective with a robot arm..." : 
+                                fabricateCategory === 'World' ? "A floating city powered by steam..." : 
+                                "Describe the entity..."
+                            }
+                            className="w-full p-3 border border-gray-300 bg-white focus:border-[#990000] outline-none font-ao3-sans text-gray-900 rounded-none shadow-inner"
+                         />
+                    </div>
+
+                    <div className="flex gap-2 justify-end mt-2">
+                        {/* Quick Gen Buttons */}
+                        <button onClick={() => { setFabricateCategory('Character'); setFabricatePrompt("The main protagonist"); handleAddFabrication(); }} className="text-xs text-gray-500 hover:text-gray-800 border px-2 py-1 rounded-none hover:bg-gray-100">Protagonist</button>
+                        <button onClick={() => { setFabricateCategory('Character'); setFabricatePrompt("The main antagonist"); handleAddFabrication(); }} className="text-xs text-gray-500 hover:text-gray-800 border px-2 py-1 rounded-none hover:bg-gray-100">Antagonist</button>
+                        <button onClick={() => { setFabricateCategory('World'); setFabricatePrompt("The starting location"); handleAddFabrication(); }} className="text-xs text-gray-500 hover:text-gray-800 border px-2 py-1 rounded-none hover:bg-gray-100">Start Location</button>
+
+                        <button
+                            onClick={handleAddFabrication}
+                            className="bg-[#990000] text-white px-6 py-2 font-bold hover:bg-[#770000] flex items-center gap-2 rounded-none shadow-sm ml-auto"
+                        >
+                            <Wand2 size={18} /> Fabricate
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
 
         {/* --- CHARACTER/LORE TAB --- */}
         {(activeTab === 'character' || activeTab === 'lore') && (
@@ -910,6 +1036,7 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
                                     {item.status === 'failed' && <span className="text-xs text-red-600 font-bold flex items-center gap-1"><AlertCircle size={10}/> Failed: {item.error}</span>}
                                     
                                     {item.modifier && <span className="text-[10px] text-gray-400 italic border-l border-gray-300 pl-2">Mod: {item.modifier.substring(0, 30)}...</span>}
+                                    {item.mode === 'fabricate' && <span className="text-[10px] text-blue-500 italic border-l border-gray-300 pl-2 flex items-center gap-1"><Hammer size={8}/> Fabricated</span>}
                                 </div>
                             </div>
 
@@ -931,7 +1058,8 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
       </div>
 
       <div className="border border-gray-300 shadow-sm mt-6 rounded-none">
-          <div className="p-4 bg-gray-50 border-b border-gray-300 flex justify-between items-center">
+          {/* ... existing bottom container ... */}
+           <div className="p-4 bg-gray-50 border-b border-gray-300 flex justify-between items-center">
             <h3 className="font-ao3-serif text-xl text-gray-800">Current Simulation Entries</h3>
             <div className="flex gap-2">
                 {onRestoreDefaults && (
@@ -997,8 +1125,8 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
             )}
           </div>
       </div>
-
-      {/* Modal for viewing/editing entry */}
+      
+      {/* ... Existing Modal Code ... */}
       {selectedEntry && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl rounded-none border border-gray-300">
