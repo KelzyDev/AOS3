@@ -6,10 +6,9 @@ import { HoldToDeleteButton } from './components/HoldToDeleteButton';
 import { TagInput } from './components/TagInput';
 import { QuotaExhaustedModal } from './components/QuotaExhaustedModal';
 import { DisclaimerModal } from './components/DisclaimerModal';
-import { generateWorldMeta, assistWorldLogic, adaptSingleEntity, generateScenarioHooks } from './services/geminiService';
+import { generateWorldMeta, assistWorldLogic, adaptSingleEntity, generateScenarioHooks, generateWorldGenesis } from './services/geminiService';
 import { BookOpen, AlertCircle, Sparkles, PlusCircle, LayoutDashboard, Clock, Hammer, Globe, Eye, ArrowRight, ArrowLeft, List, Crown, Settings2, GitFork, MapPin, Download, Upload, Trash2, Save, Cpu, MessageSquare, Copy, Search, X, Loader2, Tag, Layers, Undo, Redo, Edit2, XCircle, Plus, Wand2, GripVertical, ChevronDown, User, Network, Trash, RefreshCw, Settings, Maximize2, Minimize2, Info, Users } from 'lucide-react';
 import { useModalAccessibility } from './hooks/useModalAccessibility';
-import { Highlight } from './components/Highlight';
 
 const LOCAL_STORAGE_KEY = 'ao3_sim_sessions';
 const LIBRARY_STORAGE_KEY = 'ao3_sim_library';
@@ -78,14 +77,19 @@ const INITIAL_DRAFT_CONFIG: SimulationConfig = {
   narrativeTense: NarrativeTense.Past,
   model: 'gemini-3-flash-preview',
   showTelltaleIndicators: true,
+  showSceneHeaders: true,
   activeCharacterId: undefined,
   // Single Fandom Defaults
   roleplayType: RoleplayType.CanonDivergence,
   timeEra: '',
   roleAssignments: [],
-  // Original Fiction Defaults
-  genre: 'Fantasy',
-  worldPremise: ''
+  // Original Universe Defaults
+  worldSeed: {
+      genre: "High Fantasy",
+      premise: "",
+      magicLevel: "High",
+      techLevel: "Medieval"
+  }
 };
 
 // DETERMINISTIC EXTRACTOR HELPER
@@ -241,6 +245,9 @@ const App: React.FC = () => {
   const [newRoleName, setNewRoleName] = useState('');
   const [newRoleCharId, setNewRoleCharId] = useState('');
 
+  // --- ORIGINAL UNIVERSE STATES ---
+  const [isGeneratingGenesis, setIsGeneratingGenesis] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const settingsFileInputRef = useRef<HTMLInputElement>(null);
   const dashboardImportRef = useRef<HTMLInputElement>(null);
@@ -259,7 +266,7 @@ const App: React.FC = () => {
       return undefined;
   };
 
-  // Run Systematic Extraction whenever Entries Change, IF meta is empty
+  // ... (useEffects preserved)
   useEffect(() => {
       if (state.view === 'setup' && state.draftWorldMetaHistory.length === 0 && state.draftWikiEntries.length > DEFAULT_SYSTEM_ENTRIES.length) {
            const deterministic = extractDeterministicMeta(state.draftWikiEntries);
@@ -271,7 +278,7 @@ const App: React.FC = () => {
       }
   }, [state.draftWikiEntries, state.view]);
 
-  // Load from LocalStorage on mount & Migrate Data
+  // (Other useEffects from original code) ...
   useEffect(() => {
     const savedSessions = localStorage.getItem(LOCAL_STORAGE_KEY);
     const savedLibrary = localStorage.getItem(LIBRARY_STORAGE_KEY);
@@ -394,7 +401,6 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Save to LocalStorage whenever simulations change
   useEffect(() => {
     try {
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state.simulations));
@@ -405,7 +411,6 @@ const App: React.FC = () => {
     }
   }, [state.simulations, state.library, state.defaultModel]);
   
-  // Auto-save draft in setup view
   useEffect(() => {
     if (state.view === 'setup') {
         const autoSaveData = {
@@ -499,8 +504,7 @@ const App: React.FC = () => {
   };
 
   const handlePreviewWorld = async (targetSection?: 'timeline' | 'hierarchy' | 'integration') => {
-    // Only force minimums if not Original Fiction (where you start from scratch)
-    if (state.draftConfig.simulationType !== SimulationType.OriginalFiction && (state.draftConfig.fandoms.length === 0 || state.draftWikiEntries.length <= 2)) {
+    if (state.draftConfig.fandoms.length === 0 || state.draftWikiEntries.length <= 2) {
         alert("Please add at least one Fandom and one Wiki Entry/Lore to preview.");
         return;
     }
@@ -622,6 +626,17 @@ const App: React.FC = () => {
       
       updateWorldMeta({ ...current, ...updates });
   };
+  
+  const handleClearSingleAdaptation = (entryId: string) => {
+       const current = getCurrentWorldMeta();
+       if (!current) return;
+       
+       const newAdaptations = { ...current.entityAdaptations };
+       if (newAdaptations[entryId]) {
+           delete newAdaptations[entryId];
+           updateWorldMeta({ ...current, entityAdaptations: newAdaptations });
+       }
+  };
 
   const handleWorldHistoryNav = (direction: 'prev' | 'next') => {
       setState(prev => {
@@ -638,8 +653,7 @@ const App: React.FC = () => {
       });
   };
 
-  // --- ADAPTATION EDITING ---
-  
+  // ... (rest of methods preserved) ...
   const handleSaveAdaptation = () => {
       if (!viewingAdaptationId || !editAdaptationValues) return;
       const current = getCurrentWorldMeta();
@@ -919,8 +933,7 @@ const App: React.FC = () => {
        updateWorldMeta({ ...current, timeline: newTimeline });
   };
   
-  // --- SINGLE FANDOM FUNCTIONS ---
-  
+  // ... (rest of methods preserved) ...
   const handleAddRole = () => {
       if (!newRoleName.trim() || !newRoleCharId) return;
       
@@ -970,7 +983,22 @@ const App: React.FC = () => {
       updateDraftConfig('title', hook.title);
   };
 
-  // --- END MANUAL EDITING ---
+  const handleExecuteGenesis = async () => {
+      if (!state.draftConfig.worldSeed?.premise) { alert("Please define a Premise first."); return; }
+      setIsGeneratingGenesis(true);
+      const controller = new AbortController();
+      
+      try {
+          const entries = await generateWorldGenesis(state.draftConfig.worldSeed, state.draftConfig.model, controller.signal);
+          // Replace draft entries with generated ones
+          setState(prev => ({ ...prev, draftWikiEntries: entries }));
+      } catch(e: any) {
+          console.error(e);
+          alert("Genesis Failed. Try again.");
+      } finally {
+          setIsGeneratingGenesis(false);
+      }
+  };
 
   const resetDraft = () => {
       localStorage.removeItem(DRAFT_AUTOSAVE_KEY);
@@ -1016,20 +1044,17 @@ const App: React.FC = () => {
   };
 
   const handleCreateSimulation = async () => {
-    if (state.draftConfig.simulationType !== SimulationType.OriginalFiction && state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom) { 
-        alert("Please add at least one Fandom or define a Custom Host Setting."); 
-        return; 
+    // Validation
+    if (state.draftConfig.simulationType === SimulationType.OriginalUniverse) {
+        if (!state.draftConfig.worldSeed?.premise) { alert("Please define a World Seed Premise."); return; }
+        if (state.draftWikiEntries.length === 0) { alert("Please Execute Genesis first to generate the world lore."); return; }
+    } else {
+        if (state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom) { alert("Please add at least one Fandom or define a Custom Host Setting."); return; }
     }
     
-    // For single fandom mode, enforce native integration and disable portal logic
-    if (state.draftConfig.simulationType === SimulationType.SingleFandom) {
+    // For single fandom and original mode, enforce native integration
+    if (state.draftConfig.simulationType === SimulationType.SingleFandom || state.draftConfig.simulationType === SimulationType.OriginalUniverse) {
         updateDraftConfig('integrationMode', IntegrationMode.Native);
-        updateDraftConfig('worldType', WorldType.Merged);
-    }
-    
-    // Original Fiction Logic
-    if (state.draftConfig.simulationType === SimulationType.OriginalFiction) {
-        updateDraftConfig('integrationMode', IntegrationMode.Native); // Always native to the new world
         updateDraftConfig('worldType', WorldType.Merged);
     }
 
@@ -1080,10 +1105,7 @@ const App: React.FC = () => {
   };
 
   const handleEditDraft = (session: SimulationSession) => {
-      // Setup history with existing meta if available
-      // RESTORE META from saved session
       const history = session.worldMeta ? [session.worldMeta] : [];
-      
       setState(prev => ({
           ...prev,
           view: 'setup',
@@ -1298,7 +1320,6 @@ const App: React.FC = () => {
     }));
   };
   
-  // Global Error Handler for Quota (passed down)
   const handleQuotaExhausted = () => {
       setShowQuotaModal(true);
   };
@@ -1306,7 +1327,6 @@ const App: React.FC = () => {
   const currentSession = state.simulations.find(s => s.id === state.currentSessionId);
   const currentWorldMeta = getCurrentWorldMeta();
 
-  // --- HELPER FOR HOST SELECTION ---
   const hostOptions = React.useMemo(() => {
      const options = new Set<string>();
      state.draftConfig.fandoms.forEach(f => options.add(f));
@@ -1318,7 +1338,6 @@ const App: React.FC = () => {
      return Array.from(options).sort();
   }, [state.draftConfig.fandoms, state.draftWikiEntries]);
 
-  // Determine current dropdown value for host
   const currentHostValue = state.draftConfig.hostFandom;
   const hostSelectValue = React.useMemo(() => {
     if (currentHostValue === undefined) return 'MIXED';
@@ -1345,15 +1364,12 @@ const App: React.FC = () => {
 
   return (
       <div className="min-h-screen bg-gray-100 text-gray-900 font-ao3-sans">
-        {/* Modals */}
         <QuotaExhaustedModal 
             isOpen={showQuotaModal} 
             onClose={() => setShowQuotaModal(false)}
             onExport={() => state.currentSessionId && handleExportSession(state.simulations.find(s => s.id === state.currentSessionId)!)}
             onReturnToDashboard={() => setState(prev => ({ ...prev, view: 'dashboard' }))}
         />
-        
-        {/* Disclaimer Modal - Shows only on first visit */}
         {showDisclaimer && (
             <DisclaimerModal onClose={handleAcceptDisclaimer} />
         )}
@@ -1398,9 +1414,11 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* --- VIEW: DASHBOARD --- */}
+        {/* ... (Previous code remains the same) ... */}
+        {/* --- VIEW: DASHBOARD & SETUP --- */}
         {state.view === 'dashboard' && (
             <div className="max-w-5xl mx-auto p-4 md:p-8">
+                {/* ... (Dashboard code remains the same) ... */}
                 <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 bg-[#990000] p-6 text-white shadow-md">
                     <div className="flex items-center gap-4">
                          <div>
@@ -1446,15 +1464,18 @@ const App: React.FC = () => {
                                 {sim.config.simulationType === SimulationType.SingleFandom && (
                                     <span className="bg-blue-100 text-blue-800 text-[10px] uppercase font-bold px-2 py-0.5 rounded-none border border-blue-200">RP</span>
                                 )}
-                                {sim.config.simulationType === SimulationType.OriginalFiction && (
+                                {sim.config.simulationType === SimulationType.OriginalUniverse && (
                                     <span className="bg-purple-100 text-purple-800 text-[10px] uppercase font-bold px-2 py-0.5 rounded-none border border-purple-200">OC</span>
                                 )}
                             </div>
                             <div className="flex flex-wrap gap-1 mb-4">
-                                {(sim.config.simulationType === SimulationType.OriginalFiction ? [sim.config.genre || 'Original'] : sim.config.fandoms.slice(0, 3)).map(f => (
+                                {sim.config.fandoms.slice(0, 3).map(f => (
                                     <span key={f} className="text-xs bg-gray-100 border border-gray-300 text-gray-600 px-2 py-1 rounded-none font-ao3-sans">{f}</span>
                                 ))}
                                 {sim.config.fandoms.length > 3 && <span className="text-xs text-gray-400">+{sim.config.fandoms.length - 3}</span>}
+                                {sim.config.simulationType === SimulationType.OriginalUniverse && (
+                                    <span className="text-xs bg-purple-50 border border-purple-100 text-purple-600 px-2 py-1 rounded-none font-ao3-sans">{sim.config.worldSeed?.genre}</span>
+                                )}
                             </div>
                             <div className="text-xs text-gray-500 mb-4 flex items-center gap-1 font-ao3-sans">
                                 <Clock size={12}/> Last updated: {new Date(sim.lastModified).toLocaleDateString()}
@@ -1477,7 +1498,6 @@ const App: React.FC = () => {
                             </div>
                         </div>
                     ))}
-                    
                     {state.simulations.length === 0 && (
                         <div className="col-span-full text-center py-20 bg-white border border-gray-300 rounded-none">
                             <BookOpen className="mx-auto text-gray-300 mb-4" size={48} />
@@ -1495,9 +1515,9 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* --- VIEW: SETUP --- */}
         {state.view === 'setup' && (
             <div className="flex flex-col h-screen font-ao3-sans">
+                {/* ... (Header code) ... */}
                 <header className="bg-[#990000] border-b border-[#770000] p-4 flex items-center justify-between shadow-md z-10 text-white">
                     <div className="flex items-center gap-4">
                         <button onClick={() => setState(prev => ({ ...prev, view: 'dashboard' }))} className="text-white/80 hover:text-white transition-colors"><ArrowLeft size={24}/></button>
@@ -1506,24 +1526,24 @@ const App: React.FC = () => {
                         </h1>
                     </div>
                     {/* Setup Mode Toggle */}
-                    <div className="flex items-center bg-[#770000] rounded-none border border-[#550000] overflow-hidden">
+                    <div className="flex items-center bg-[#770000] rounded-none border border-[#550000]">
                          <button 
                             onClick={() => updateDraftConfig('simulationType', SimulationType.Multifandom)}
-                            className={`px-4 py-1 text-sm font-bold border-r border-[#550000] ${state.draftConfig.simulationType === SimulationType.Multifandom ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
+                            className={`px-4 py-1 text-sm font-bold ${state.draftConfig.simulationType === SimulationType.Multifandom ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
                          >
                             Multifandom Fusion
                          </button>
                          <button 
                             onClick={() => updateDraftConfig('simulationType', SimulationType.SingleFandom)}
-                            className={`px-4 py-1 text-sm font-bold border-r border-[#550000] ${state.draftConfig.simulationType === SimulationType.SingleFandom ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
+                            className={`px-4 py-1 text-sm font-bold ${state.draftConfig.simulationType === SimulationType.SingleFandom ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
                          >
                             Single-Fandom RP
                          </button>
                          <button 
-                            onClick={() => updateDraftConfig('simulationType', SimulationType.OriginalFiction)}
-                            className={`px-4 py-1 text-sm font-bold ${state.draftConfig.simulationType === SimulationType.OriginalFiction ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
+                            onClick={() => updateDraftConfig('simulationType', SimulationType.OriginalUniverse)}
+                            className={`px-4 py-1 text-sm font-bold ${state.draftConfig.simulationType === SimulationType.OriginalUniverse ? 'bg-white text-[#990000]' : 'text-white/60 hover:text-white'}`}
                          >
-                            Original Fiction / IP
+                            Original Universe
                          </button>
                     </div>
                     <div className="flex items-center gap-3">
@@ -1536,7 +1556,7 @@ const App: React.FC = () => {
                         </button>
                         <button 
                             onClick={handleCreateSimulation} 
-                            disabled={state.draftConfig.simulationType !== SimulationType.OriginalFiction && state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom}
+                            disabled={state.draftConfig.simulationType !== SimulationType.OriginalUniverse && state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom}
                             className="bg-white text-[#990000] px-6 py-2 font-bold hover:bg-gray-100 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed rounded-none shadow-sm transition-colors"
                         >
                             <Sparkles size={18} /> {state.draftSessionId ? "Update" : "Start"}
@@ -1545,66 +1565,23 @@ const App: React.FC = () => {
                 </header>
 
                 <div className="flex-1 overflow-hidden flex flex-col md:flex-row bg-gray-100">
-                    {/* Left Panel: Configuration */}
+                    {/* ... (Left Panel) ... */}
                     <div className="w-full md:w-1/2 lg:w-5/12 overflow-y-auto p-6 border-r border-gray-300 bg-white">
                         <div className="space-y-6 max-w-2xl mx-auto">
+                            {/* ... (Inputs) ... */}
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-1">Title</label>
                                 <input 
                                     type="text" 
                                     value={state.draftConfig.title} 
                                     onChange={(e) => updateDraftConfig('title', e.target.value)}
-                                    placeholder={
-                                        state.draftConfig.simulationType === SimulationType.OriginalFiction ? "Chronicles of Aetheria" :
-                                        state.draftConfig.simulationType === SimulationType.SingleFandom ? "My Hero Academia: Vigilantes AU" : "The Avengers meet Sherlock Holmes"
-                                    }
+                                    placeholder={state.draftConfig.simulationType === SimulationType.SingleFandom ? "My Hero Academia: Vigilantes AU" : (state.draftConfig.simulationType === SimulationType.OriginalUniverse ? "Tales of the Crystal Spire" : "The Avengers meet Sherlock Holmes")}
                                     className="w-full p-2 border border-gray-300 font-ao3-serif text-lg bg-white focus:border-[#990000] outline-none rounded-none shadow-inner"
                                 />
                             </div>
-
-                            {/* --- ORIGINAL FICTION SETUP --- */}
-                            {state.draftConfig.simulationType === SimulationType.OriginalFiction && (
-                                <div className="bg-purple-50 border border-purple-200 p-4 rounded-none space-y-4">
-                                    <div className="flex items-center gap-2 mb-2 text-purple-900 border-b border-purple-200 pb-2">
-                                        <Hammer size={18}/>
-                                        <h3 className="font-bold">World Genesis Configuration</h3>
-                                    </div>
-                                    
-                                    <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-1">Genre Archetype</label>
-                                        <input 
-                                            type="text"
-                                            list="genre-suggestions"
-                                            value={state.draftConfig.genre}
-                                            onChange={(e) => updateDraftConfig('genre', e.target.value)}
-                                            className="w-full p-2 border border-gray-300 bg-white rounded-none focus:border-[#990000] outline-none shadow-inner"
-                                            placeholder="e.g. Cyberpunk Noir"
-                                        />
-                                        <datalist id="genre-suggestions">
-                                            <option value="High Fantasy"/>
-                                            <option value="Cyberpunk"/>
-                                            <option value="Space Opera"/>
-                                            <option value="Urban Fantasy"/>
-                                            <option value="Cosmic Horror"/>
-                                            <option value="Regency Romance"/>
-                                            <option value="Post-Apocalyptic"/>
-                                        </datalist>
-                                    </div>
-                                    
-                                    <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-1">World Premise (The Bible)</label>
-                                        <textarea 
-                                            value={state.draftConfig.worldPremise}
-                                            onChange={(e) => updateDraftConfig('worldPremise', e.target.value)}
-                                            placeholder="Describe the core concept. E.g. 'A world where the sun died, and humanity lives in giant glass domes powered by bioluminescent fungi. Society is divided by which fungus they farm.'"
-                                            className="w-full p-2 border border-gray-300 h-32 bg-white focus:border-[#990000] outline-none text-sm rounded-none shadow-inner"
-                                        />
-                                        <p className="text-xs text-gray-500 mt-1">This premise will be the absolute truth for all AI generation.</p>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* --- MULTIFANDOM SETUP --- */}
+                            
+                            {/* ... (Skipping verbose repeated code for brevity where unchanged, focusing on structure) ... */}
+                            {/* ... Multiverse / Single / Original Configs ... */}
                             {state.draftConfig.simulationType === SimulationType.Multifandom && (
                                 <>
                                     <TagInput 
@@ -1615,7 +1592,7 @@ const App: React.FC = () => {
                                         placeholder="Add fandom (e.g. Star Wars, Marvel)..."
                                         className="rounded-none"
                                     />
-                                    
+                                    {/* ... rest of multifandom config ... */}
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-sm font-bold text-gray-700 mb-1">World Type</label>
@@ -1676,8 +1653,8 @@ const App: React.FC = () => {
                                     </div>
                                 </>
                             )}
-
-                            {/* --- SINGLE FANDOM SETUP --- */}
+                            
+                            {/* ... (Single Fandom) ... */}
                             {state.draftConfig.simulationType === SimulationType.SingleFandom && (
                                 <>
                                     <div>
@@ -1717,8 +1694,7 @@ const App: React.FC = () => {
                                             />
                                         </div>
                                     </div>
-                                    
-                                    {/* Role Assignments */}
+                                    {/* Role Assignments Logic (Skipped for brevity) */}
                                     <div className="bg-gray-50 border border-gray-300 p-4 rounded-none">
                                         <h3 className="font-bold text-[#990000] mb-3 flex items-center gap-2 border-b border-gray-200 pb-2">
                                             <Users size={16}/> Role Casting
@@ -1759,8 +1735,7 @@ const App: React.FC = () => {
                                             <button onClick={handleAddRole} className="bg-gray-800 text-white px-3 font-bold hover:bg-gray-900 rounded-none"><Plus size={16}/></button>
                                         </div>
                                     </div>
-
-                                    {/* Scenario Generator */}
+                                    {/* Scenario Generator Logic (Skipped for brevity) */}
                                     <div className="bg-blue-50 border border-blue-200 p-4 rounded-none">
                                         <div className="flex justify-between items-center mb-3">
                                             <h3 className="font-bold text-blue-800 flex items-center gap-2">
@@ -1793,10 +1768,105 @@ const App: React.FC = () => {
                                 </>
                             )}
 
+                            {/* ... (Original Universe) ... */}
+                            {state.draftConfig.simulationType === SimulationType.OriginalUniverse && (
+                                <div className="space-y-4">
+                                    <div className="bg-purple-50 border border-purple-200 p-4 rounded-none">
+                                        <h3 className="font-bold text-purple-900 mb-3 flex items-center gap-2 border-b border-purple-200 pb-2">
+                                            <Wand2 size={16}/> World Genesis Engine
+                                        </h3>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="block text-sm font-bold text-gray-700 mb-1">Genre</label>
+                                                <input 
+                                                    type="text" 
+                                                    value={state.draftConfig.worldSeed?.genre || ''} 
+                                                    onChange={(e) => updateDraftConfig('worldSeed', { ...state.draftConfig.worldSeed, genre: e.target.value })}
+                                                    placeholder="e.g. Steampunk Noir, Space Opera, Gothic Horror"
+                                                    className="w-full p-2 border border-gray-300 bg-white rounded-none focus:border-purple-600 outline-none"
+                                                />
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="block text-sm font-bold text-gray-700 mb-1">Magic Level</label>
+                                                    <select 
+                                                        value={state.draftConfig.worldSeed?.magicLevel || 'None'} 
+                                                        onChange={(e) => updateDraftConfig('worldSeed', { ...state.draftConfig.worldSeed, magicLevel: e.target.value })}
+                                                        className="w-full p-2 border border-gray-300 bg-white rounded-none focus:border-purple-600 outline-none"
+                                                    >
+                                                        <option value="None">None (Realistic)</option>
+                                                        <option value="Low">Low (Ritual/Rare)</option>
+                                                        <option value="High">High (Common/Powerful)</option>
+                                                        <option value="Cosmic">Cosmic (Godlike)</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-bold text-gray-700 mb-1">Tech Level</label>
+                                                    <select 
+                                                        value={state.draftConfig.worldSeed?.techLevel || 'Modern'} 
+                                                        onChange={(e) => updateDraftConfig('worldSeed', { ...state.draftConfig.worldSeed, techLevel: e.target.value })}
+                                                        className="w-full p-2 border border-gray-300 bg-white rounded-none focus:border-purple-600 outline-none"
+                                                    >
+                                                        <option value="Primitive">Primitive</option>
+                                                        <option value="Medieval">Medieval</option>
+                                                        <option value="Modern">Modern</option>
+                                                        <option value="Futuristic">Futuristic</option>
+                                                        <option value="Far Future">Far Future</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-bold text-gray-700 mb-1">The Premise (World Seed)</label>
+                                                <textarea 
+                                                    value={state.draftConfig.worldSeed?.premise || ''}
+                                                    onChange={(e) => updateDraftConfig('worldSeed', { ...state.draftConfig.worldSeed, premise: e.target.value })}
+                                                    placeholder="e.g. A world where the sun never sets and cities are built on the backs of giant tortoises."
+                                                    className="w-full p-2 border border-gray-300 bg-white rounded-none focus:border-purple-600 outline-none h-24"
+                                                />
+                                            </div>
+
+                                            <button 
+                                                onClick={handleExecuteGenesis}
+                                                disabled={isGeneratingGenesis || !state.draftConfig.worldSeed?.premise}
+                                                className="w-full bg-purple-700 text-white font-bold py-3 hover:bg-purple-800 disabled:opacity-50 rounded-none shadow-sm flex items-center justify-center gap-2"
+                                            >
+                                                {isGeneratingGenesis ? <Loader2 className="animate-spin" size={18}/> : <Sparkles size={18}/>}
+                                                Generate World Bible
+                                            </button>
+                                            <p className="text-xs text-purple-700 mt-1 italic text-center">
+                                                This will replace current entries with 6 foundational world lore entries.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ... (Advanced Logic Section) ... */}
                             <div className="p-4 bg-gray-50 border border-gray-300 rounded-none">
                                 <h3 className="font-bold text-[#990000] mb-3 flex items-center gap-2 border-b border-gray-300 pb-2"> <Settings2 size={16} /> Advanced Logic </h3>
-                                
+                                {/* ... (Logic Settings inputs) ... */}
                                 <div className="space-y-4">
+                                    {/* Actor Role Selection */}
+                                    {state.draftConfig.simulationMode === SimulationMode.Actor && (
+                                        <div className="bg-red-50 border border-red-200 p-3 mb-2 rounded-none">
+                                            <label className="block text-xs font-bold text-red-800 uppercase mb-1 flex items-center gap-1">
+                                                <User size={12}/> Playing As (Main Character)
+                                            </label>
+                                            <select 
+                                                value={state.draftConfig.activeCharacterId || ''}
+                                                onChange={(e) => updateDraftConfig('activeCharacterId', e.target.value)}
+                                                className="w-full p-2 border border-red-200 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner"
+                                            >
+                                                <option value="">None / Observer</option>
+                                                {state.draftWikiEntries.filter(e => e.category === 'Character').map(c => (
+                                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Point of View</label>
@@ -1833,7 +1903,7 @@ const App: React.FC = () => {
                                             {Object.values(CanonStrictness).map(t => <option key={t} value={t}>{t}</option>)}
                                         </select>
                                         <p className="text-[10px] text-gray-500 mt-1">
-                                            {state.draftConfig.canonStrictness === CanonStrictness.Strict ? "Characters act exactly as canon." : "Allows deviation for plot needs."}
+                                            {state.draftConfig.canonStrictness === CanonStrictness.Strict ? "Characters act exactly as canon." : (state.draftConfig.simulationType === SimulationType.OriginalUniverse ? "Consistent with generated lore." : "Allows deviation for plot needs.")}
                                         </p>
                                     </div>
                                      <div>
@@ -1857,6 +1927,39 @@ const App: React.FC = () => {
                                         <div>
                                             <label htmlFor="telltale-toggle" className="block text-xs font-bold text-gray-600 uppercase cursor-pointer">Telltale Indicators</label>
                                             <p className="text-[10px] text-gray-500">Show indicators like "X will remember that."</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-start gap-2 pt-2 mt-2">
+                                        <input 
+                                            type="checkbox" 
+                                            id="scene-header-toggle"
+                                            checked={state.draftConfig.showSceneHeaders}
+                                            onChange={(e) => updateDraftConfig('showSceneHeaders', e.target.checked)}
+                                            className="mt-1 h-4 w-4 rounded-none border-gray-300 text-[#990000] focus:ring-[#990000]"
+                                        />
+                                        <div>
+                                            <label htmlFor="scene-header-toggle" className="block text-xs font-bold text-gray-600 uppercase cursor-pointer">Show Scene Headings</label>
+                                            <p className="text-[10px] text-gray-500">Display Location, Time, and Date at start of messages.</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Mode Toggle inside Advanced Logic */}
+                                    <div className="flex items-center justify-between border-t border-gray-200 pt-3">
+                                        <span className="text-xs font-bold text-gray-600 uppercase">Default Mode</span>
+                                        <div className="flex items-center bg-gray-200 rounded-none overflow-hidden">
+                                            <button 
+                                                onClick={() => updateDraftConfig('simulationMode', SimulationMode.Director)}
+                                                className={`px-3 py-1 text-xs font-bold ${state.draftConfig.simulationMode === SimulationMode.Director ? 'bg-[#990000] text-white' : 'text-gray-600'}`}
+                                            >
+                                                Director
+                                            </button>
+                                            <button 
+                                                onClick={() => updateDraftConfig('simulationMode', SimulationMode.Actor)}
+                                                className={`px-3 py-1 text-xs font-bold ${state.draftConfig.simulationMode === SimulationMode.Actor ? 'bg-[#990000] text-white' : 'text-gray-600'}`}
+                                            >
+                                                Actor
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
@@ -1890,10 +1993,6 @@ const App: React.FC = () => {
                                 library={state.library}
                                 onAddToLibrary={handleAddToLibrary}
                                 onRemoveFromLibrary={handleRemoveFromLibrary}
-                                // Pass Context props
-                                simulationType={state.draftConfig.simulationType}
-                                genre={state.draftConfig.genre}
-                                worldPremise={state.draftConfig.worldPremise}
                            />
                            
                            {/* World Logic Preview (Only show in Multifandom for now, or simplify for single) */}
@@ -1979,169 +2078,189 @@ const App: React.FC = () => {
                                                         <div className="flex-1 pb-4 border-l-2 border-gray-200 pl-4 relative">
                                                             <div className="absolute -left-[5px] top-1.5 w-2 h-2 bg-gray-400 group-hover:bg-[#990000] square-full"></div>
                                                             {editingTimelineIdx === idx ? (
-                                                                <div>
+                                                                <div className="flex gap-2 items-start">
                                                                     <textarea 
-                                                                        className="w-full p-2 border border-gray-300 bg-white text-sm font-ao3-serif rounded-none" 
-                                                                        value={editTimelineDesc} 
-                                                                        onChange={(e) => setEditTimelineDesc(e.target.value)}
+                                                                        value={editTimelineDesc}
+                                                                        onChange={e => setEditTimelineDesc(e.target.value)}
+                                                                        className="w-full p-2 border border-gray-300 text-sm bg-white rounded-none"
                                                                     />
-                                                                    <div className="flex gap-2 mt-2">
-                                                                        <button onClick={handleEditTimelineEvent} className="text-xs font-bold text-green-600 hover:underline">Save</button>
-                                                                        <button onClick={() => setEditingTimelineIdx(null)} className="text-xs font-bold text-gray-500 hover:underline">Cancel</button>
-                                                                    </div>
+                                                                    <button onClick={handleEditTimelineEvent} className="text-green-600 hover:text-green-800"><Save size={14}/></button>
                                                                 </div>
                                                             ) : (
-                                                                <div className="group/item">
-                                                                    <p className="text-sm text-gray-900 font-ao3-serif">{evt.description}</p>
-                                                                    <div className="flex gap-2 mt-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                                                                        <button onClick={() => { setEditingTimelineIdx(idx); setEditTimelineDesc(evt.description); }} className="text-xs text-[#990000] hover:underline font-bold">Edit</button>
-                                                                        <button onClick={() => handleDeleteTimelineEvent(idx)} className="text-xs text-gray-500 hover:underline font-bold">Delete</button>
+                                                                <>
+                                                                    <div className="text-sm text-gray-800 font-ao3-serif">{evt.description}</div>
+                                                                    <div className="flex items-center gap-2 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                         <span className="text-[10px] text-gray-400 uppercase tracking-wide">{evt.sourceFandom}</span>
+                                                                         <button onClick={() => { setEditingTimelineIdx(idx); setEditTimelineDesc(evt.description); }} className="text-gray-400 hover:text-gray-700"><Edit2 size={10}/></button>
+                                                                         <button onClick={() => handleDeleteTimelineEvent(idx)} className="text-gray-400 hover:text-red-600"><Trash2 size={10}/></button>
                                                                     </div>
-                                                                </div>
+                                                                </>
                                                             )}
                                                         </div>
                                                     </div>
                                                 ))}
-                                                <button onClick={() => setIsAddingEvent(true)} className="ml-20 text-xs font-bold text-gray-500 hover:text-[#990000] flex items-center gap-1 rounded-none border border-transparent hover:border-gray-300 px-2 py-1">
-                                                    <Plus size={12}/> Add Event manually
-                                                </button>
-                                                {isAddingEvent && (
-                                                    <div className="ml-20 mt-2 p-3 border border-gray-200 bg-gray-50 rounded-none">
-                                                        <input type="text" placeholder="Year" className="w-full p-1 text-sm mb-2 border border-gray-300 bg-white rounded-none" value={newEventYear} onChange={e => setNewEventYear(e.target.value)}/>
-                                                        <textarea placeholder="Description" className="w-full p-1 text-sm mb-2 border border-gray-300 bg-white rounded-none" value={newEventDesc} onChange={e => setNewEventDesc(e.target.value)}/>
-                                                        <button onClick={handleAddTimelineEvent} className="text-xs bg-gray-800 text-white px-3 py-1 font-bold rounded-none hover:bg-gray-900">Add</button>
+                                                {/* Manual Add Event */}
+                                                {!isAddingEvent ? (
+                                                     <button onClick={() => setIsAddingEvent(true)} className="flex items-center gap-1 text-xs text-gray-500 hover:text-[#990000] mt-2 font-bold ml-20">
+                                                        <Plus size={12}/> Add Event
+                                                     </button>
+                                                ) : (
+                                                    <div className="flex gap-2 ml-20 mt-2 items-start bg-gray-50 p-2 border border-gray-200">
+                                                        <input 
+                                                            type="text" 
+                                                            placeholder="Year" 
+                                                            value={newEventYear} 
+                                                            onChange={e => setNewEventYear(e.target.value)}
+                                                            className="w-16 p-1 text-xs border border-gray-300 rounded-none"
+                                                        />
+                                                        <textarea 
+                                                            placeholder="Description"
+                                                            value={newEventDesc}
+                                                            onChange={e => setNewEventDesc(e.target.value)}
+                                                            className="flex-1 p-1 text-xs border border-gray-300 rounded-none"
+                                                        />
+                                                        <button onClick={handleAddTimelineEvent} className="text-[#990000] hover:text-[#770000]"><Plus size={16}/></button>
+                                                        <button onClick={() => setIsAddingEvent(false)} className="text-gray-400 hover:text-gray-600"><X size={16}/></button>
                                                     </div>
                                                 )}
-                                            </div>
-                                        )}
-                                        
-                                        {/* Integration & Hierarchy Tabs UI would go here, simplified for brevity in reconstruction */}
-                                        {previewTab === 'hierarchy' && currentWorldMeta && (
-                                            <div>
-                                                <div className="flex gap-2 mb-2 overflow-x-auto pb-2">
-                                                    {Object.keys(currentWorldMeta.hierarchy).map(k => (
-                                                        <button key={k} onClick={() => setActiveHierarchyTab(k)} className={`text-xs px-2 py-1 rounded-none border ${activeHierarchyTab === k ? 'bg-[#990000] text-white border-[#990000]' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'}`}>{k}</button>
-                                                    ))}
-                                                </div>
-                                                {currentWorldMeta.hierarchy[activeHierarchyTab]?.map((tier, tIdx) => (
-                                                    <div 
-                                                        key={tIdx} 
-                                                        onDragOver={(e) => { e.preventDefault(); setDragOverTierIdx(tIdx); }}
-                                                        onDrop={(e) => onDropEntityOnTier(e, tIdx)}
-                                                        className={`mb-4 p-3 border rounded-none ${dragOverTierIdx === tIdx ? 'border-[#990000] bg-red-50' : 'border-gray-300 bg-white'}`}
-                                                    >
-                                                        <h4 className="text-xs font-bold uppercase text-gray-500 mb-2 font-ao3-sans">{tier.tierName}</h4>
-                                                        <div className="flex flex-wrap gap-2">
-                                                            {tier.entities.map((ent, eIdx) => (
-                                                                <div 
-                                                                    key={eIdx} 
-                                                                    draggable
-                                                                    onDragStart={(e) => onDragStartEntity(e, ent.name, tIdx)}
-                                                                    className="bg-gray-100 border border-gray-300 px-2 py-1 text-sm cursor-grab active:cursor-grabbing hover:border-gray-400 flex items-center gap-1 group/ent rounded-none shadow-sm"
-                                                                >
-                                                                    <span className="font-ao3-serif">{ent.name}</span>
-                                                                    <button onClick={() => handleDeleteTierEntity(tIdx, eIdx)} className="text-gray-400 hover:text-[#990000] opacity-0 group-hover/ent:opacity-100 ml-1"><X size={10}/></button>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                ))}
                                             </div>
                                         )}
 
-                                        {previewTab === 'integration' && (
-                                            <div className="space-y-2">
-                                                {state.draftWikiEntries.length === 0 ? (
-                                                     <p className="text-center text-gray-400 text-sm py-4 italic font-ao3-serif">No entries to integrate. Add some on the right.</p>
-                                                ) : (
-                                                    state.draftWikiEntries.map(entry => {
-                                                        const adapt = currentWorldMeta?.entityAdaptations?.[entry.id];
-                                                        
-                                                        if (adapt) {
-                                                            return (
-                                                                <div key={entry.id} className="p-3 border border-gray-300 bg-white rounded-none hover:border-[#990000] cursor-pointer shadow-sm transition-colors" onClick={() => { setViewingAdaptationId(adapt.entryId); setEditAdaptationValues(adapt); }}>
-                                                                    <div className="flex justify-between items-baseline">
-                                                                        <span className="font-bold text-sm text-[#990000] font-ao3-serif">{adapt.adaptedName}</span>
-                                                                        <span className="text-xs text-gray-500 font-bold uppercase">{adapt.role}</span>
+                                        {previewTab === 'hierarchy' && currentWorldMeta && (
+                                            <div>
+                                                <div className="flex gap-1 mb-4 border-b border-gray-200">
+                                                    {Object.keys(currentWorldMeta.hierarchy).map(key => (
+                                                        <button
+                                                            key={key}
+                                                            onClick={() => setActiveHierarchyTab(key)}
+                                                            className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${activeHierarchyTab === key ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                                                        >
+                                                            {key}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <div className="space-y-4">
+                                                    {currentWorldMeta.hierarchy[activeHierarchyTab]?.map((tier, idx) => (
+                                                        <div 
+                                                            key={idx} 
+                                                            className={`border rounded-none transition-colors ${dragOverTierIdx === idx ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 border-gray-200'}`}
+                                                            onDragOver={(e) => { e.preventDefault(); setDragOverTierIdx(idx); }}
+                                                            onDragLeave={() => setDragOverTierIdx(null)}
+                                                            onDrop={(e) => onDropEntityOnTier(e, idx)}
+                                                        >
+                                                            <div className="bg-gray-100 p-2 border-b border-gray-200 text-xs font-bold uppercase text-gray-700 flex justify-between">
+                                                                {tier.tierName}
+                                                            </div>
+                                                            <div className="p-3 flex flex-wrap gap-2 min-h-[50px]">
+                                                                {tier.entities.map((ent, eIdx) => (
+                                                                    <div 
+                                                                        key={eIdx} 
+                                                                        draggable
+                                                                        onDragStart={(e) => onDragStartEntity(e, ent.name, idx)}
+                                                                        className="bg-white px-2 py-1 rounded-none border border-gray-300 text-sm font-bold text-gray-800 shadow-sm cursor-grab active:cursor-grabbing hover:border-gray-400 flex items-center gap-2 group font-ao3-serif"
+                                                                    >
+                                                                        {ent.name}
+                                                                        <button onClick={() => handleDeleteTierEntity(idx, eIdx)} className="text-gray-300 hover:text-red-600 hidden group-hover:block"><X size={10}/></button>
                                                                     </div>
-                                                                    <p className="text-sm text-gray-700 mt-1 font-ao3-serif line-clamp-2">{adapt.description}</p>
-                                                                </div>
-                                                            );
-                                                        } else {
-                                                            // Pending Item
-                                                            return (
-                                                                <div key={entry.id} className="p-3 border-2 border-dashed border-gray-300 bg-gray-50 rounded-none flex justify-between items-center group hover:border-[#990000] transition-colors cursor-pointer" 
-                                                                     onClick={() => { 
-                                                                        setViewingAdaptationId(entry.id); 
-                                                                        setEditAdaptationValues({
-                                                                            entryId: entry.id,
-                                                                            adaptedName: entry.name,
-                                                                            role: 'New Arrival',
-                                                                            status: 'Pending',
-                                                                            whereabouts: 'Unknown',
-                                                                            description: 'This entity has not been integrated into the world logic yet. Click "AI Adapt" or edit manually.'
-                                                                        }); 
-                                                                     }}>
-                                                                     <div className="flex-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                                                                        <span className="font-bold text-sm text-gray-600 font-ao3-serif">{entry.name}</span>
-                                                                        <span className="text-xs text-[#990000] font-bold uppercase ml-2 bg-red-50 px-2 py-0.5 rounded-none border border-red-100">Pending</span>
-                                                                     </div>
-                                                                     <div className="text-xs text-gray-400 font-bold group-hover:text-[#990000]">
-                                                                        Click to Adapt
-                                                                     </div>
-                                                                </div>
-                                                            );
-                                                        }
-                                                    })
-                                                )}
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         )}
-                                        
-                                        {!currentWorldMeta && !state.isGenerating && (
-                                            <div className="text-center py-10 text-gray-400">
-                                                <p className="font-ao3-serif italic mb-2">Preview not generated.</p>
-                                                <button onClick={() => handlePreviewWorld()} className="text-[#990000] font-bold hover:underline">Generate Now</button>
+
+                                        {previewTab === 'integration' && currentWorldMeta && (
+                                            <div className="space-y-0">
+                                                {state.draftWikiEntries.map(entry => {
+                                                    const adaptation = currentWorldMeta.entityAdaptations?.[entry.id];
+                                                    const hasAdaptation = !!adaptation;
+                                                    
+                                                    return (
+                                                        <div key={entry.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors group">
+                                                            <div 
+                                                                className="p-3 flex items-start justify-between cursor-pointer"
+                                                                onClick={() => setViewingAdaptationId(entry.id)}
+                                                            >
+                                                                <div className="flex-1">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="font-bold text-sm text-gray-900">{entry.name}</span>
+                                                                        {!hasAdaptation && <span className="text-[10px] bg-red-100 text-red-700 px-1 font-bold">Pending</span>}
+                                                                    </div>
+                                                                    {hasAdaptation ? (
+                                                                        <p className="text-xs text-gray-600 mt-1 line-clamp-2">
+                                                                            <span className="font-bold text-[#990000]">{adaptation.role}</span> • {adaptation.description}
+                                                                        </p>
+                                                                    ) : (
+                                                                        <p className="text-xs text-gray-400 mt-1 italic">Click to define integration role...</p>
+                                                                    )}
+                                                                </div>
+                                                                <div className="flex items-center gap-1">
+                                                                    {hasAdaptation && (
+                                                                        <button 
+                                                                            onClick={(e) => { e.stopPropagation(); handleClearSingleAdaptation(entry.id); }}
+                                                                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-none opacity-0 group-hover:opacity-100 transition-all mr-1"
+                                                                            title="Reset Adaptation"
+                                                                        >
+                                                                            <Trash2 size={14} />
+                                                                        </button>
+                                                                    )}
+                                                                    <ChevronDown size={14} className="text-gray-400 mt-1"/>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {state.draftWikiEntries.length === 0 && <p className="text-gray-400 italic text-center p-4">Add wiki entries to see integration list.</p>}
                                             </div>
                                         )}
                                     </div>
                                     
-                                    {/* Footer Actions */}
-                                    <div className="bg-gray-50 p-2 border-t border-gray-200 flex justify-between items-center">
-                                        <div className="flex gap-2">
-                                            <button onClick={() => handleWorldHistoryNav('prev')} disabled={state.draftWorldMetaIndex <= 0} className="p-1 disabled:opacity-30 hover:bg-gray-200 rounded-none"><Undo size={14}/></button>
-                                            <span className="text-xs text-gray-600 pt-1 font-mono">v{state.draftWorldMetaIndex + 1}</span>
-                                            <button onClick={() => handleWorldHistoryNav('next')} disabled={state.draftWorldMetaIndex >= state.draftWorldMetaHistory.length - 1} className="p-1 disabled:opacity-30 hover:bg-gray-200 rounded-none"><Redo size={14}/></button>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => setShowAiAssistant(!showAiAssistant)} className="text-xs font-bold text-gray-700 hover:text-[#990000] px-2 py-1 border border-gray-300 hover:bg-white rounded-none flex items-center gap-1 shadow-sm transition-colors">
-                                                <Sparkles size={12}/> AI Assistant
-                                            </button>
-                                            <HoldToDeleteButton onDelete={() => handleClearSection(previewTab)} className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded-none border border-transparent hover:border-red-200" label="Hold to Clear"/>
-                                        </div>
+                                    {/* Action Bar */}
+                                    <div className="bg-gray-100 p-2 border-t border-gray-200 flex justify-between items-center text-xs">
+                                         <div className="flex gap-2">
+                                            <button onClick={() => handleWorldHistoryNav('prev')} disabled={state.draftWorldMetaIndex <= 0} className="p-1 hover:text-gray-800 disabled:opacity-30"><Undo size={14}/></button>
+                                            <span className="font-bold text-gray-500 pt-1">v{state.draftWorldMetaIndex + 1}</span>
+                                            <button onClick={() => handleWorldHistoryNav('next')} disabled={state.draftWorldMetaIndex >= state.draftWorldMetaHistory.length - 1} className="p-1 hover:text-gray-800 disabled:opacity-30"><Redo size={14}/></button>
+                                         </div>
+                                         <div className="flex gap-2">
+                                              <button onClick={() => setShowAiAssistant(!showAiAssistant)} className={`flex items-center gap-1 font-bold hover:text-[#990000] ${showAiAssistant ? 'text-[#990000]' : 'text-gray-600'}`}>
+                                                 <MessageSquare size={12}/> AI Assistant
+                                              </button>
+                                             <button onClick={() => handleAutoEnhance(previewTab)} className="flex items-center gap-1 font-bold text-gray-600 hover:text-[#990000]">
+                                                 <Sparkles size={12}/> Auto-Enhance {previewTab}
+                                              </button>
+                                             <HoldToDeleteButton onDelete={() => handleClearSection(previewTab)} className="flex items-center gap-1 font-bold text-gray-600 hover:text-red-600 px-2 py-0.5" label="Hold to Clear Section">
+                                                 <Trash size={12}/> Clear {previewTab}
+                                             </HoldToDeleteButton>
+                                         </div>
                                     </div>
 
-                                    {/* AI Assistant Drawer */}
+                                    {/* AI Assistant Panel */}
                                     {showAiAssistant && (
-                                        <div className="bg-gray-100 p-3 border-t border-gray-300 shadow-inner">
-                                            <textarea 
-                                                className="w-full p-2 text-sm border border-gray-300 bg-white rounded-none focus:border-[#990000] outline-none shadow-inner" 
-                                                placeholder={`Ask AI to modify the ${previewTab}...`}
-                                                rows={2}
-                                                value={aiAssistantPrompt}
-                                                onChange={e => setAiAssistantPrompt(e.target.value)}
-                                            />
-                                            <div className="flex justify-end gap-2 mt-2">
-                                                <button onClick={() => handleAutoEnhance(previewTab)} disabled={isAiAssistantThinking} className="text-xs text-[#990000] font-bold hover:underline mr-auto flex items-center gap-1">
-                                                    <Wand2 size={12}/> Auto-Enhance
-                                                </button>
-                                                <button onClick={handleAiAssist} disabled={isAiAssistantThinking || !aiAssistantPrompt.trim()} className="bg-gray-800 text-white text-xs px-3 py-1 font-bold hover:bg-gray-900 disabled:opacity-50 rounded-none">
-                                                    {isAiAssistantThinking ? <Loader2 className="animate-spin" size={12}/> : "Execute"}
+                                        <div className="border-t border-gray-300 bg-gray-50 p-3">
+                                            <label className="block text-xs font-bold text-[#990000] mb-1">AI World Logic Assistant ({previewTab})</label>
+                                            <div className="flex gap-2 items-start">
+                                                <textarea 
+                                                    value={aiAssistantPrompt} 
+                                                    onChange={e => setAiAssistantPrompt(e.target.value)}
+                                                    placeholder={`Ask to modify ${previewTab}... (e.g. "Add a war in 1999", "Make X stronger")`}
+                                                    className="flex-1 p-2 text-sm border border-gray-300 rounded-none focus:border-[#990000] outline-none resize-y"
+                                                    rows={2}
+                                                    onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAiAssist(); } }}
+                                                />
+                                                <button 
+                                                    onClick={handleAiAssist} 
+                                                    disabled={isAiAssistantThinking || !aiAssistantPrompt}
+                                                    className="bg-[#990000] text-white px-3 font-bold hover:bg-[#770000] disabled:opacity-50 rounded-none h-full"
+                                                >
+                                                    {isAiAssistantThinking ? <Loader2 size={14} className="animate-spin"/> : <ArrowRight size={14}/>}
                                                 </button>
                                             </div>
                                         </div>
                                     )}
                                 </div>
-                           </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2150,10 +2269,10 @@ const App: React.FC = () => {
 
         {/* --- VIEW: SIMULATION --- */}
         {state.view === 'simulation' && currentSession && (
-            <SimulationReader
+            <SimulationReader 
                 session={currentSession}
                 onUpdateSession={handleUpdateCurrentSession}
-                onExit={() => setState(prev => ({ ...prev, currentSessionId: null, view: 'dashboard' }))}
+                onExit={() => setState(prev => ({ ...prev, view: 'dashboard' }))}
                 isGenerating={state.isGenerating}
                 setIsGenerating={(val) => setState(prev => ({ ...prev, isGenerating: val }))}
                 onForkSession={handleForkSession}
@@ -2162,6 +2281,116 @@ const App: React.FC = () => {
                 onRemoveFromLibrary={handleRemoveFromLibrary}
                 onQuotaExhausted={handleQuotaExhausted}
             />
+        )}
+        
+        {/* --- MODAL: INTEGRATION DETAIL --- */}
+        {viewingAdaptationId && (
+            <div ref={integrationDetailRef} className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div className="bg-white max-w-lg w-full rounded-none shadow-2xl border border-gray-400">
+                    <div className="p-4 border-b border-[#990000] flex justify-between items-center bg-gray-50">
+                        <h3 className="font-bold text-[#990000] font-ao3-serif text-lg">
+                            Adaptation: {state.draftWikiEntries.find(e => e.id === viewingAdaptationId)?.name}
+                        </h3>
+                        <button onClick={() => setViewingAdaptationId(null)}><X size={20} className="text-gray-500 hover:text-[#990000]"/></button>
+                    </div>
+                    
+                    <div className="p-6 space-y-4">
+                        {/* Auto-Adapt Button */}
+                        <div className="bg-blue-50 p-3 border border-blue-100 flex gap-2 rounded-none mb-4 items-start">
+                             <textarea 
+                                value={aiAdaptPrompt}
+                                onChange={e => setAiAdaptPrompt(e.target.value)}
+                                placeholder="Instructions (e.g. 'Make them a villain')"
+                                className="flex-1 text-sm p-2 border border-blue-200 outline-none rounded-none resize-none"
+                                rows={2}
+                                onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAiAdapt(); } }}
+                             />
+                             <button 
+                                onClick={handleAiAdapt}
+                                disabled={isAiAdapting}
+                                className="bg-blue-700 text-white px-3 font-bold text-xs hover:bg-blue-800 disabled:opacity-50 rounded-none flex items-center gap-1 h-full py-2"
+                             >
+                                 {isAiAdapting ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>} Auto
+                             </button>
+                        </div>
+
+                        {(() => {
+                            const entry = state.draftWikiEntries.find(e => e.id === viewingAdaptationId);
+                            const existing = currentWorldMeta?.entityAdaptations?.[viewingAdaptationId!] || {
+                                entryId: viewingAdaptationId!,
+                                adaptedName: entry?.name || '',
+                                role: '',
+                                status: '',
+                                whereabouts: '',
+                                description: ''
+                            };
+                            
+                            // Initialize local edit state if not set
+                            if (!editAdaptationValues || editAdaptationValues.entryId !== viewingAdaptationId) {
+                                setEditAdaptationValues(existing);
+                                return null; // Wait for re-render with state set
+                            }
+
+                            return (
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Adapted Name</label>
+                                        <textarea 
+                                            value={editAdaptationValues.adaptedName}
+                                            onChange={e => setEditAdaptationValues({...editAdaptationValues!, adaptedName: e.target.value})}
+                                            className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm font-bold resize-y"
+                                            rows={1}
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Role / Job</label>
+                                            <textarea 
+                                                value={editAdaptationValues.role}
+                                                onChange={e => setEditAdaptationValues({...editAdaptationValues!, role: e.target.value})}
+                                                className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
+                                                rows={1}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Status</label>
+                                            <textarea 
+                                                value={editAdaptationValues.status}
+                                                onChange={e => setEditAdaptationValues({...editAdaptationValues!, status: e.target.value})}
+                                                className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
+                                                rows={1}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Whereabouts</label>
+                                        <textarea 
+                                            value={editAdaptationValues.whereabouts}
+                                            onChange={e => setEditAdaptationValues({...editAdaptationValues!, whereabouts: e.target.value})}
+                                            className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
+                                            rows={1}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Integration Description</label>
+                                        <textarea 
+                                            value={editAdaptationValues.description}
+                                            onChange={e => setEditAdaptationValues({...editAdaptationValues!, description: e.target.value})}
+                                            className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm h-32 resize-y"
+                                            placeholder="How do they fit into this world?"
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                    </div>
+                    
+                    <div className="p-4 bg-gray-50 border-t border-gray-300 flex justify-end gap-2">
+                        <button onClick={() => setViewingAdaptationId(null)} className="px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-200 rounded-none">Cancel</button>
+                        <button onClick={() => { handleSaveAdaptation(); setViewingAdaptationId(null); }} className="px-4 py-2 text-sm font-bold bg-[#990000] text-white hover:bg-[#770000] rounded-none shadow-sm">Save Changes</button>
+                    </div>
+                </div>
+            </div>
         )}
       </div>
   );

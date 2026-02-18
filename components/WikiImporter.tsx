@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { WikiEntry, MODEL_OPTIONS, SimulationType } from '../types';
-import { analyzeWikiContent, scanWikiUrl, modifyEntryWithAI, DiscoveredEntity, fabricateEntity } from '../services/geminiService';
-import { Loader2, Plus, Globe, FileText, CheckCircle2, User, Map, X, Info, Trash2, Edit2, Save, Bookmark, BookOpen, Search, Radar, ArrowRight, ArrowLeft, ChevronRight, ChevronLeft, RefreshCw, History, ExternalLink, Cpu, CheckSquare, Square, Wand2, GripVertical, Filter, Play, Pause, AlertCircle, ListPlus, Clock, Hammer } from 'lucide-react';
+import { WikiEntry, MODEL_OPTIONS } from '../types';
+import { analyzeWikiContent, scanWikiUrl, modifyEntryWithAI, DiscoveredEntity, generateOriginalCharacter } from '../services/geminiService';
+import { Loader2, Plus, Globe, FileText, CheckCircle2, User, Map, X, Info, Trash2, Edit2, Save, Bookmark, BookOpen, Search, Radar, ArrowRight, ArrowLeft, ChevronRight, ChevronLeft, RefreshCw, History, ExternalLink, Cpu, CheckSquare, Square, Wand2, GripVertical, Filter, Play, Pause, AlertCircle, ListPlus, Clock, Sparkles } from 'lucide-react';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 
 interface WikiImporterProps {
@@ -18,17 +18,13 @@ interface WikiImporterProps {
   library: WikiEntry[];
   onAddToLibrary: (entry: WikiEntry) => void;
   onRemoveFromLibrary: (id: string) => void;
-  // New props for Original Fiction context
-  simulationType?: SimulationType;
-  genre?: string;
-  worldPremise?: string;
 }
 
 interface QueueItem {
   id: string;
   type: 'character' | 'lore';
   category: WikiEntry['category'];
-  mode: 'link' | 'text' | 'search' | 'fabricate';
+  mode: 'link' | 'text' | 'search' | 'oc_prompt';
   input: string;
   name: string;
   modifier: string;
@@ -194,22 +190,15 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
   existingEntries,
   library,
   onAddToLibrary,
-  onRemoveFromLibrary,
-  simulationType = SimulationType.Multifandom,
-  genre = "Original",
-  worldPremise = ""
+  onRemoveFromLibrary
 }) => {
-  const [activeTab, setActiveTab] = useState<'character' | 'lore' | 'scanner' | 'library' | 'fabricator'>('character');
-  const [mode, setMode] = useState<'link' | 'text' | 'search' | 'fabricate'>('link');
+  const [activeTab, setActiveTab] = useState<'character' | 'lore' | 'scanner' | 'library' | 'generator'>('character');
+  const [mode, setMode] = useState<'link' | 'text' | 'search'>('link');
   const [inputVal, setInputVal] = useState('');
   const [name, setName] = useState('');
   const [loreCategory, setLoreCategory] = useState<WikiEntry['category']>('World');
   const [modifier, setModifier] = useState('');
   
-  // Fabricator State
-  const [fabricateCategory, setFabricateCategory] = useState<WikiEntry['category']>('Character');
-  const [fabricatePrompt, setFabricatePrompt] = useState('');
-
   // Scanner State
   const [selectedModel, setSelectedModel] = useState(model);
   const [scanUrl, setScanUrl] = useState('');
@@ -221,6 +210,15 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
   const [selectedForImport, setSelectedForImport] = useState<Set<string>>(new Set());
   const [activeScanFilter, setActiveScanFilter] = useState<string>('All');
   const [scannerModifier, setScannerModifier] = useState('');
+
+  // OC Factory State
+  const [ocPrompt, setOcPrompt] = useState('');
+  const [isGeneratingOc, setIsGeneratingOc] = useState(false); // Legacy single gen state, mostly unused if using queue
+
+  // Library State
+  const [libPage, setLibPage] = useState(1);
+  const [libFilter, setLibFilter] = useState<string>('All');
+  const [libSearch, setLibSearch] = useState('');
 
   // Queue State
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -251,13 +249,6 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
   useEffect(() => {
     setSelectedModel(model);
   }, [model]);
-  
-  // Auto-switch to Fabricator if Original Fiction
-  useEffect(() => {
-      if (simulationType === SimulationType.OriginalFiction && activeTab === 'scanner') {
-          setActiveTab('fabricator');
-      }
-  }, [simulationType]);
 
   // --- QUEUE PROCESSING EFFECT ---
   useEffect(() => {
@@ -283,40 +274,40 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
         abortControllerRef.current = controller;
 
         try {
-            let result;
-            
-            if (item.mode === 'fabricate') {
-                // Call Fabricate Service
-                 result = await fabricateEntity(
-                    item.input, 
-                    item.category, 
-                    genre, 
-                    worldPremise, 
-                    selectedModel, 
-                    controller.signal
-                 );
+            if (item.mode === 'oc_prompt') {
+                // HANDLE OC GENERATION
+                const entry = await generateOriginalCharacter(item.input, existingEntries, selectedModel, controller.signal);
+                
+                // Update the queue item with the generated name so user sees "Specific OC" instead of "New OC"
+                setQueue(prev => prev.map(q => q.id === item.id ? { ...q, name: entry.name } : q));
+                
+                onImport(entry);
             } else {
-                 // Call Standard Analysis
-                 result = await analyzeWikiContent(item.input, item.category, selectedModel, controller.signal, item.mode, item.modifier);
-            }
-            
-            // Name refinement logic
-            let finalName = item.name || result.name || item.input;
-            
-            const newEntry: WikiEntry = {
-                id: crypto.randomUUID(),
-                name: finalName,
-                category: item.category,
-                content: result.content,
-                fandom: result.fandom,
-                sourceUrl: item.mode === 'link' ? item.input : undefined
-            };
+                // HANDLE STANDARD WIKI/SEARCH GENERATION
+                const result = await analyzeWikiContent(item.input, item.category, selectedModel, controller.signal, item.mode, item.modifier);
+                
+                // Name refinement logic
+                let finalName = item.name || item.input;
+                if (item.mode === 'search' && item.category === 'Character') {
+                    const nameMatch = result.content.match(/Full Canon Name:\s*(.+)/);
+                    if (nameMatch && nameMatch[1]) finalName = nameMatch[1].trim();
+                }
 
-            onImport(newEntry);
-            if (result.fandom && onFandomDetected) onFandomDetected(result.fandom);
+                const newEntry: WikiEntry = {
+                    id: crypto.randomUUID(),
+                    name: finalName,
+                    category: item.category,
+                    content: result.content,
+                    fandom: result.fandom,
+                    sourceUrl: item.mode === 'link' ? item.input : undefined
+                };
+
+                onImport(newEntry);
+                if (result.fandom && onFandomDetected) onFandomDetected(result.fandom);
+            }
 
             // Mark completed
-            setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'completed', name: finalName } : q));
+            setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'completed' } : q));
 
         } catch (err: any) {
              if (err.name === 'AbortError') return;
@@ -335,7 +326,7 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
     };
 
     processNext();
-  }, [queue, isQueueRunning, selectedModel, onImport, onFandomDetected, genre, worldPremise]);
+  }, [queue, isQueueRunning, selectedModel, onImport, onFandomDetected, existingEntries]);
 
   // Suggestions for autocomplete (mix of existing + library)
   const allKnownNames = Array.from(new Set([...existingEntries, ...library].map(e => e.name)));
@@ -347,17 +338,19 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
     }
     setIsScanning(false);
     setIsAiModifying(false);
+    setIsGeneratingOc(false);
+    // Queue items are handled via handleRemoveFromQueue which aborts individually
     setError("Operation cancelled.");
   };
 
-  const handleAddToQueue = (overrideName?: string, overrideInput?: string, overrideCategory?: WikiEntry['category'], overrideMode?: 'search' | 'link' | 'fabricate', overrideModifier?: string) => {
+  const handleAddToQueue = (overrideName?: string, overrideInput?: string, overrideCategory?: WikiEntry['category'], overrideMode?: QueueItem['mode'], overrideModifier?: string) => {
     const nameToUse = overrideName || name;
     const inputToUse = overrideInput || inputVal;
     const catToUse = overrideCategory || (activeTab === 'character' ? 'Character' : loreCategory);
     const modeToUse = overrideMode || mode;
     const modifierToUse = overrideModifier !== undefined ? overrideModifier : modifier;
 
-    if (!inputToUse.trim() || (!nameToUse.trim() && modeToUse !== 'search' && modeToUse !== 'fabricate')) return;
+    if (!inputToUse.trim() || (!nameToUse.trim() && modeToUse !== 'search' && modeToUse !== 'oc_prompt')) return;
 
     const newItem: QueueItem = {
         id: crypto.randomUUID(),
@@ -381,26 +374,26 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
         setModifier('');
     }
   };
-  
-  // Fabricator Specific Add
-  const handleAddFabrication = () => {
-      if (!fabricatePrompt.trim()) return;
+
+  // Dedicated handler for OC Queueing to keep UI logic clean
+  const handleAddOcToQueue = () => {
+      if (!ocPrompt.trim()) return;
       
       const newItem: QueueItem = {
-        id: crypto.randomUUID(),
-        type: fabricateCategory === 'Character' ? 'character' : 'lore',
-        category: fabricateCategory,
-        mode: 'fabricate',
-        input: fabricatePrompt,
-        name: '', // Auto-generated
-        modifier: '',
-        status: 'queued',
-        timestamp: Date.now()
-    };
-    
-    setQueue(prev => [...prev, newItem]);
-    setIsQueueRunning(true);
-    setFabricatePrompt('');
+          id: crypto.randomUUID(),
+          type: 'character',
+          category: 'Character',
+          mode: 'oc_prompt',
+          input: ocPrompt,
+          name: "New OC (Pending...)", 
+          modifier: '',
+          status: 'queued',
+          timestamp: Date.now()
+      };
+
+      setQueue(prev => [...prev, newItem]);
+      setIsQueueRunning(true);
+      setOcPrompt(''); // Clear
   };
 
   const handleBulkAddFromScanner = async () => {
@@ -498,6 +491,7 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
     }
   };
 
+  // --- AI MODIFICATION LOGIC ---
   const handleAiModifyEntry = async () => {
       if (!selectedEntry || !aiModifyPrompt.trim()) return;
       
@@ -527,10 +521,6 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
     if (e.key === 'Enter') {
       handleAddToQueue();
     }
-  };
-  
-  const handleFabricateKeyDown = (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') handleAddFabrication();
   };
 
   const openEntry = (entry: WikiEntry) => {
@@ -598,36 +588,40 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
     }
   };
   
+  // Library Pagination & Filtering Logic
+  const filteredLibrary = library.filter(entry => {
+      const matchCat = libFilter === 'All' || entry.category === libFilter;
+      const matchSearch = !libSearch.trim() || entry.name.toLowerCase().includes(libSearch.toLowerCase());
+      return matchCat && matchSearch;
+  });
+  
+  const totalLibPages = Math.ceil(filteredLibrary.length / ITEMS_PER_PAGE);
+  const currentLibEntries = filteredLibrary.slice((libPage - 1) * ITEMS_PER_PAGE, libPage * ITEMS_PER_PAGE);
+
   return (
     <>
       <div className="bg-white border border-gray-300 shadow-sm mb-6 relative rounded-none">
         <div className="flex border-b border-gray-200 overflow-x-auto">
-          {simulationType !== SimulationType.OriginalFiction && (
-              <>
-                  <button
-                    onClick={() => setActiveTab('character')}
-                    className={`flex-items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'character' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
-                    <User size={16} /> Add Character
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('lore')}
-                    className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'lore' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
-                    <Map size={16} /> Add World/Lore
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('scanner')}
-                    className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'scanner' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
-                    <Radar size={16} /> Fandom Scanner
-                  </button>
-              </>
-          )}
-          {simulationType === SimulationType.OriginalFiction && (
-               <button
-                onClick={() => setActiveTab('fabricator')}
-                className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'fabricator' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
-                <Hammer size={16} /> Entity Fabricator
-              </button>
-          )}
+          <button
+            onClick={() => setActiveTab('character')}
+            className={`flex-items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'character' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
+            <User size={16} /> Add Character
+          </button>
+          <button
+            onClick={() => setActiveTab('lore')}
+            className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'lore' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
+            <Map size={16} /> Add World/Lore
+          </button>
+          <button
+            onClick={() => setActiveTab('generator')}
+            className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'generator' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
+            <Sparkles size={16} /> OC Factory
+          </button>
+          <button
+            onClick={() => setActiveTab('scanner')}
+            className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'scanner' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
+            <Radar size={16} /> Fandom Scanner
+          </button>
           <button
             onClick={() => setActiveTab('library')}
             className={`flex items-center gap-2 p-4 text-sm font-bold border-b-2 transition-colors ${activeTab === 'library' ? 'border-[#990000] text-[#990000]' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}>
@@ -651,67 +645,6 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
                 </select>
             </div>
         </div>
-        
-        {/* --- FABRICATOR TAB (NEW) --- */}
-        {activeTab === 'fabricator' && (
-            <div className="p-6">
-                <div className="bg-blue-50 border border-blue-200 p-4 mb-4 text-sm text-gray-700 rounded-none">
-                    <p className="font-bold flex items-center gap-2 mb-1 text-blue-800"><Hammer size={14}/> World Genesis Mode</p>
-                    <p>
-                        Instead of scanning existing wikis, use this tool to generate completely original entities that fit your 
-                        <span className="font-bold text-gray-900 mx-1">"{genre || 'Original'}"</span> world premise.
-                    </p>
-                </div>
-
-                <div className="flex flex-col gap-4">
-                    <div className="flex gap-4 items-center">
-                        <label className="text-sm font-bold text-gray-700">Type:</label>
-                        <select
-                            value={fabricateCategory}
-                            onChange={(e) => setFabricateCategory(e.target.value as WikiEntry['category'])}
-                            className="p-2 border border-gray-300 bg-white rounded-none focus:border-[#990000] outline-none shadow-inner"
-                        >
-                            <option value="Character">Character</option>
-                            <option value="World">Location</option>
-                            <option value="Lore">History / Lore</option>
-                            <option value="Faction">Faction / Group</option>
-                            <option value="Species">Species</option>
-                            <option value="Facility">Facility / Artifact</option>
-                        </select>
-                    </div>
-
-                    <div>
-                         <label className="block text-sm font-bold text-gray-700 mb-1">Fabrication Prompt</label>
-                         <input 
-                            type="text"
-                            value={fabricatePrompt}
-                            onChange={(e) => setFabricatePrompt(e.target.value)}
-                            onKeyDown={handleFabricateKeyDown}
-                            placeholder={
-                                fabricateCategory === 'Character' ? "A cynical detective with a robot arm..." : 
-                                fabricateCategory === 'World' ? "A floating city powered by steam..." : 
-                                "Describe the entity..."
-                            }
-                            className="w-full p-3 border border-gray-300 bg-white focus:border-[#990000] outline-none font-ao3-sans text-gray-900 rounded-none shadow-inner"
-                         />
-                    </div>
-
-                    <div className="flex gap-2 justify-end mt-2">
-                        {/* Quick Gen Buttons */}
-                        <button onClick={() => { setFabricateCategory('Character'); setFabricatePrompt("The main protagonist"); handleAddFabrication(); }} className="text-xs text-gray-500 hover:text-gray-800 border px-2 py-1 rounded-none hover:bg-gray-100">Protagonist</button>
-                        <button onClick={() => { setFabricateCategory('Character'); setFabricatePrompt("The main antagonist"); handleAddFabrication(); }} className="text-xs text-gray-500 hover:text-gray-800 border px-2 py-1 rounded-none hover:bg-gray-100">Antagonist</button>
-                        <button onClick={() => { setFabricateCategory('World'); setFabricatePrompt("The starting location"); handleAddFabrication(); }} className="text-xs text-gray-500 hover:text-gray-800 border px-2 py-1 rounded-none hover:bg-gray-100">Start Location</button>
-
-                        <button
-                            onClick={handleAddFabrication}
-                            className="bg-[#990000] text-white px-6 py-2 font-bold hover:bg-[#770000] flex items-center gap-2 rounded-none shadow-sm ml-auto"
-                        >
-                            <Wand2 size={18} /> Fabricate
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )}
 
         {/* --- CHARACTER/LORE TAB --- */}
         {(activeTab === 'character' || activeTab === 'lore') && (
@@ -815,6 +748,48 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
               </button>
             </div>
           </div>
+        )}
+
+        {/* --- OC FACTORY TAB --- */}
+        {activeTab === 'generator' && (
+            <div className="p-6">
+                <div className="bg-purple-50 border border-purple-200 p-4 mb-4 rounded-none">
+                    <div className="flex items-start gap-3">
+                        <Sparkles className="text-purple-600 mt-1" size={20} />
+                        <div>
+                            <h3 className="text-purple-900 font-bold text-sm mb-1">OC Factory</h3>
+                            <p className="text-xs text-purple-700">
+                                This tool generates characters that fit the <strong>current world context</strong>. 
+                                It reads your existing World Lore and Fandom entries to ensure the character fits the setting.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="space-y-4">
+                     <div>
+                        <label className="block text-sm font-bold text-gray-700 mb-1">Character Concept / Archetype</label>
+                        <textarea
+                            value={ocPrompt}
+                            onChange={(e) => setOcPrompt(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleAddOcToQueue()}
+                            placeholder="e.g. A gritty detective who uses blood magic. They hate the ruling faction."
+                            className="w-full p-3 border border-gray-300 focus:border-purple-600 outline-none font-ao3-sans bg-white text-gray-900 rounded-none shadow-inner h-32"
+                        />
+                     </div>
+                     
+                     <div className="flex justify-end">
+                        <button 
+                            onClick={handleAddOcToQueue}
+                            disabled={!ocPrompt.trim()}
+                            className="bg-purple-700 text-white px-6 py-2 font-bold hover:bg-purple-800 flex items-center gap-2 rounded-none shadow-sm disabled:opacity-50"
+                        >
+                            <Plus size={18} /> Add to Queue
+                        </button>
+                     </div>
+                     {error && <p className="text-red-600 text-sm font-bold text-right">{error}</p>}
+                </div>
+            </div>
         )}
 
         {/* --- SCANNER TAB --- */}
@@ -953,35 +928,91 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
         {/* --- LIBRARY TAB --- */}
         {activeTab === 'library' && (
             <div className="p-6">
-                 <h3 className="font-ao3-serif text-xl mb-4">Bookmarked Entries</h3>
+                 <div className="flex justify-between items-end mb-4 flex-wrap gap-4">
+                     <h3 className="font-ao3-serif text-xl">Bookmarked Entries</h3>
+                     
+                     <div className="flex items-center gap-2 flex-1 justify-end min-w-[300px]">
+                         {/* Category Filter */}
+                         <div className="relative">
+                             <Filter size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500"/>
+                             <select 
+                                value={libFilter}
+                                onChange={(e) => { setLibFilter(e.target.value); setLibPage(1); }}
+                                className="pl-7 pr-4 py-2 border border-gray-300 rounded-none bg-white text-xs font-bold text-gray-700 outline-none focus:border-[#990000] shadow-sm h-10"
+                             >
+                                 <option value="All">All Categories</option>
+                                 <option value="Character">Characters</option>
+                                 <option value="World">World/Locations</option>
+                                 <option value="Lore">Lore</option>
+                                 <option value="Facility">Facilities</option>
+                                 <option value="Species">Species</option>
+                                 <option value="Religion">Religions</option>
+                                 <option value="Country">Countries</option>
+                             </select>
+                         </div>
+                         
+                         {/* Search */}
+                         <div className="relative flex-1 max-w-xs">
+                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input 
+                                type="text" 
+                                placeholder="Search library..."
+                                value={libSearch}
+                                onChange={(e) => { setLibSearch(e.target.value); setLibPage(1); }}
+                                className="w-full pl-9 p-2 border border-gray-300 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-sm h-10"
+                            />
+                            {libSearch && (
+                                <button onClick={() => setLibSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                                    <X size={12}/>
+                                </button>
+                            )}
+                         </div>
+                     </div>
+                 </div>
+
                  {library.length === 0 ? (
                      <p className="text-gray-500 italic">Your library is empty. Add entries from the list below to save them for later.</p>
                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {library.map(entry => (
-                             <div key={entry.id} className="bg-white p-3 border border-gray-300 flex justify-between items-center group shadow-sm rounded-none hover:border-[#990000]">
-                                <div>
-                                    <div className="font-bold text-gray-900">{entry.name}</div>
-                                    <div className="text-xs text-gray-500 uppercase font-bold">{entry.category}</div>
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {currentLibEntries.map(entry => (
+                                 <div key={entry.id} className="bg-white p-3 border border-gray-300 flex justify-between items-center group shadow-sm rounded-none hover:border-[#990000]">
+                                    <div>
+                                        <div className="font-bold text-gray-900">{entry.name}</div>
+                                        <div className="text-xs text-gray-500 uppercase font-bold">{entry.category}</div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                         <button
+                                            onClick={() => onRemoveFromLibrary(entry.id)}
+                                            className="text-gray-400 hover:text-red-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                            title="Remove from Library"
+                                        >
+                                            <X size={14}/>
+                                        </button>
+                                        <button
+                                            onClick={() => onImport(entry)}
+                                            className="bg-gray-100 border border-gray-300 text-gray-700 px-3 py-1 text-sm font-bold hover:bg-gray-200 hover:text-black opacity-0 group-hover:opacity-100 transition-opacity rounded-none"
+                                        >
+                                            Import
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                     <button
-                                        onClick={() => onRemoveFromLibrary(entry.id)}
-                                        className="text-gray-400 hover:text-red-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                                        title="Remove from Library"
-                                    >
-                                        <X size={14}/>
-                                    </button>
-                                    <button
-                                        onClick={() => onImport(entry)}
-                                        className="bg-gray-100 border border-gray-300 text-gray-700 px-3 py-1 text-sm font-bold hover:bg-gray-200 hover:text-black opacity-0 group-hover:opacity-100 transition-opacity rounded-none"
-                                    >
-                                        Import
-                                    </button>
-                                </div>
+                            ))}
+                        </div>
+                        
+                        {filteredLibrary.length === 0 && (
+                            <div className="text-center p-8 text-gray-400 italic">No entries match your search.</div>
+                        )}
+                        
+                        {/* Library Pagination */}
+                        {totalLibPages > 1 && (
+                            <div className="flex justify-center items-center gap-0 border border-gray-300 rounded-none overflow-hidden mt-6 w-fit mx-auto shadow-sm">
+                                <button onClick={() => setLibPage(p => Math.max(1, p - 1))} disabled={libPage === 1} className="p-2 disabled:opacity-30 hover:bg-gray-100 border-r border-gray-300"><ChevronLeft size={16}/></button>
+                                <span className="px-3 py-1 bg-gray-50 text-xs font-bold text-gray-600">Page {libPage} of {totalLibPages}</span>
+                                <button onClick={() => setLibPage(p => Math.min(totalLibPages, p + 1))} disabled={libPage === totalLibPages} className="p-2 disabled:opacity-30 hover:bg-gray-100 border-l border-gray-300"><ChevronRight size={16}/></button>
                             </div>
-                        ))}
-                    </div>
+                        )}
+                    </>
                  )}
             </div>
         )}
@@ -1026,8 +1057,9 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
                             
                             <div className="flex-1">
                                 <div className="flex items-center gap-2">
-                                    <span className="font-bold text-sm text-gray-800">{item.name || item.input}</span>
+                                    <span className="font-bold text-sm text-gray-800">{item.name || (item.mode === 'oc_prompt' ? "New OC (Pending...)" : item.input)}</span>
                                     <span className="text-[10px] uppercase font-bold px-1 border rounded-none text-gray-500 bg-white">{item.category}</span>
+                                    {item.mode === 'oc_prompt' && <span className="text-[10px] uppercase font-bold px-1 border rounded-none text-purple-600 border-purple-200 bg-purple-50">OC</span>}
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                     {item.status === 'queued' && <span className="text-xs text-gray-500 flex items-center gap-1"><Clock size={10}/> Queued</span>}
@@ -1036,7 +1068,6 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
                                     {item.status === 'failed' && <span className="text-xs text-red-600 font-bold flex items-center gap-1"><AlertCircle size={10}/> Failed: {item.error}</span>}
                                     
                                     {item.modifier && <span className="text-[10px] text-gray-400 italic border-l border-gray-300 pl-2">Mod: {item.modifier.substring(0, 30)}...</span>}
-                                    {item.mode === 'fabricate' && <span className="text-[10px] text-blue-500 italic border-l border-gray-300 pl-2 flex items-center gap-1"><Hammer size={8}/> Fabricated</span>}
                                 </div>
                             </div>
 
@@ -1058,8 +1089,7 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
       </div>
 
       <div className="border border-gray-300 shadow-sm mt-6 rounded-none">
-          {/* ... existing bottom container ... */}
-           <div className="p-4 bg-gray-50 border-b border-gray-300 flex justify-between items-center">
+          <div className="p-4 bg-gray-50 border-b border-gray-300 flex justify-between items-center">
             <h3 className="font-ao3-serif text-xl text-gray-800">Current Simulation Entries</h3>
             <div className="flex gap-2">
                 {onRestoreDefaults && (
@@ -1125,8 +1155,8 @@ export const WikiImporter: React.FC<WikiImporterProps> = ({
             )}
           </div>
       </div>
-      
-      {/* ... Existing Modal Code ... */}
+
+      {/* Modal for viewing/editing entry */}
       {selectedEntry && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl rounded-none border border-gray-300">

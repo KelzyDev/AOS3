@@ -7,7 +7,7 @@ export enum SimulationMode {
 export enum SimulationType {
   Multifandom = 'MULTIFANDOM',
   SingleFandom = 'SINGLE_FANDOM',
-  OriginalFiction = 'ORIGINAL_FICTION' // New: Worldbuilding / IP Sim
+  OriginalUniverse = 'ORIGINAL_UNIVERSE'
 }
 
 export enum RoleplayType {
@@ -119,9 +119,16 @@ export interface RoleAssignment {
   description?: string; // e.g. "A brooding anti-hero version"
 }
 
+export interface WorldSeed {
+    genre: string; // e.g. Cyberpunk, High Fantasy
+    premise: string; // The "Hook"
+    magicLevel: 'None' | 'Low' | 'High' | 'Cosmic';
+    techLevel: 'Primitive' | 'Medieval' | 'Modern' | 'Futuristic' | 'Far Future';
+}
+
 export interface SimulationConfig {
   title: string;
-  simulationType: SimulationType; // Multi, Single, or Original
+  simulationType: SimulationType; // NEW: Multi vs Single vs Original
   fandoms: string[];
   hostFandom?: string; // The primary setting/world that dominates physics/history
   worldType: WorldType;
@@ -135,9 +142,8 @@ export interface SimulationConfig {
   timeEra?: string; // e.g. "Modern Day", "1800s"
   roleAssignments?: RoleAssignment[]; // Map characters to archetypes
 
-  // Original Fiction Specifics
-  genre?: string; // e.g. "Cyberpunk", "High Fantasy"
-  worldPremise?: string; // The seed prompt for the world
+  // Original Universe Specifics
+  worldSeed?: WorldSeed;
 
   // Advanced Engine Settings
   tone: ToneType;
@@ -151,12 +157,19 @@ export interface SimulationConfig {
   narrativeTense: NarrativeTense;
   model: string;
   showTelltaleIndicators: boolean;
+  showSceneHeaders: boolean;
 }
 
 // Telltale-style choice object
 export interface TelltaleChoice {
   letter: 'A' | 'B' | 'C' | 'D';
   text: string;
+}
+
+export interface SceneHeader {
+  location: string;
+  time: string;
+  date: string;
 }
 
 // New Tree Node Interface
@@ -169,6 +182,8 @@ export interface StoryNode {
   timestamp: number;
   suggestions?: string[]; // For Director Mode
   choices?: TelltaleChoice[]; // For Actor Mode
+  sceneHeader?: SceneHeader; // The location/time metadata
+  telltaleTags?: string[]; // "X will remember that" notifications
   label?: string; // For marking branches (e.g., "Canon", "Dark Timeline")
 }
 
