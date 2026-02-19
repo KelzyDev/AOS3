@@ -12,7 +12,7 @@ interface QuotaExhaustedModalProps {
 export const QuotaExhaustedModal: React.FC<QuotaExhaustedModalProps> = ({ isOpen, onClose, onExport, onReturnToDashboard }) => {
   if (!isOpen) return null;
 
-  const activities = [
+  const activities: { icon: React.ReactNode; text: string }[] = [
     { icon: <Leaf size={18} className="text-green-600"/>, text: "Touch grass — step outside, stretch, breathe" },
     { icon: <Gamepad2 size={18} className="text-purple-600"/>, text: "Quick game — play some games at steam, epic, etc" },
     { icon: <PenTool size={18} className="text-[#990000]"/>, text: "Read AO3 — support creators & get inspiration" },

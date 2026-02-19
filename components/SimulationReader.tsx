@@ -945,11 +945,297 @@ export const SimulationReader: React.FC<SimulationReaderProps> = ({
                     )}
                 </div>
             </div>
-          </div>
+          </main>
+        </div>
+      </div>
+      
+      {/* MODAL: ADD LORE */}
+      {showAddLore && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+             <div ref={addLoreModalRef} className="bg-white max-w-5xl w-full h-[85vh] flex flex-col shadow-2xl rounded-none border border-gray-300">
+                <div className="p-4 border-b border-[#990000] flex justify-between items-center bg-gray-50">
+                    <h3 className="font-ao3-serif font-bold text-lg text-[#990000]">Add Character / Lore Mid-Story</h3>
+                    <button onClick={() => setShowAddLore(false)}><X size={24} className="text-gray-500 hover:text-[#990000]"/></button>
+                </div>
+                <div className="flex-1 overflow-y-auto bg-gray-100 p-0">
+                    <WikiImporter 
+                        model={session.config.model}
+                        onImport={handleImportMidStory}
+                        onUpdateEntry={(updated) => {
+                             const newEntries = session.wikiEntries.map(e => e.id === updated.id ? updated : e);
+                             onUpdateSession({ wikiEntries: newEntries });
+                        }}
+                        onRemoveEntry={(id) => {
+                             const newEntries = session.wikiEntries.filter(e => e.id !== id);
+                             onUpdateSession({ wikiEntries: newEntries });
+                        }}
+                        onClearAll={() => {}}
+                        existingEntries={session.wikiEntries}
+                        library={library}
+                        onAddToLibrary={onAddToLibrary}
+                        onRemoveFromLibrary={onRemoveFromLibrary}
+                    />
+                </div>
+             </div>
         </div>
       )}
-      
-      {/* ... Other Modals ... */}
+
+      {/* MODAL: ROSTER */}
+      {showRoster && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+             <div ref={rosterModalRef} className="bg-white max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl rounded-none border border-gray-300">
+                <div className="p-4 border-b border-[#990000] flex justify-between items-center bg-gray-50">
+                    <h3 className="font-ao3-serif font-bold text-lg text-[#990000]">Character Roster & State</h3>
+                    <button onClick={() => setShowRoster(false)}><X size={24} className="text-gray-500 hover:text-[#990000]"/></button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-100 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {characters.map(char => {
+                        const state = session.characterStates[char.id] || { characterId: char.id, emotion: 'Neutral', stress: 0, notes: '' };
+                        return (
+                            <div key={char.id} className="bg-white border border-gray-300 p-4 shadow-sm">
+                                <div className="flex justify-between items-start mb-2">
+                                    <h4 className="font-bold text-[#990000]">{char.name}</h4>
+                                    <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-none border border-gray-200">{char.fandom}</span>
+                                </div>
+                                <div className="space-y-2 text-sm">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase">Emotion</label>
+                                        <input 
+                                            type="text" 
+                                            value={state.emotion} 
+                                            onChange={(e) => {
+                                                const newStates = { ...session.characterStates, [char.id]: { ...state, emotion: e.target.value } };
+                                                onUpdateSession({ characterStates: newStates });
+                                            }}
+                                            className="w-full border-b border-gray-300 focus:border-[#990000] outline-none bg-white text-gray-900"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase">Stress ({state.stress}%)</label>
+                                        <input 
+                                            type="range" 
+                                            min="0" max="100" 
+                                            value={state.stress} 
+                                            onChange={(e) => {
+                                                const newStates = { ...session.characterStates, [char.id]: { ...state, stress: parseInt(e.target.value) } };
+                                                onUpdateSession({ characterStates: newStates });
+                                            }}
+                                            className="w-full accent-[#990000]"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-500 uppercase">Notes / Status</label>
+                                        <input 
+                                            type="text" 
+                                            value={state.notes} 
+                                            onChange={(e) => {
+                                                const newStates = { ...session.characterStates, [char.id]: { ...state, notes: e.target.value } };
+                                                onUpdateSession({ characterStates: newStates });
+                                            }}
+                                            className="w-full border-b border-gray-300 focus:border-[#990000] outline-none bg-white text-gray-900"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+             </div>
+        </div>
+      )}
+
+      {/* MODAL: DIRECTORS BOARD */}
+      {showDirectorsBoard && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+             <div ref={directorsBoardRef} className="bg-white max-w-5xl w-full h-[85vh] flex flex-col shadow-2xl rounded-none border border-gray-300">
+                <div className="flex border-b border-gray-300 bg-gray-100">
+                     <button onClick={() => setDirectorsBoardTab('scene')} className={`px-6 py-3 font-bold text-sm border-r border-gray-300 ${directorsBoardTab === 'scene' ? 'bg-white text-[#990000] border-t-4 border-t-[#990000]' : 'text-gray-500 hover:bg-gray-200'}`}>Scene Control</button>
+                     <button onClick={() => setDirectorsBoardTab('timeline')} className={`px-6 py-3 font-bold text-sm border-r border-gray-300 ${directorsBoardTab === 'timeline' ? 'bg-white text-[#990000] border-t-4 border-t-[#990000]' : 'text-gray-500 hover:bg-gray-200'}`}>Timeline</button>
+                     <button onClick={() => setDirectorsBoardTab('hierarchy')} className={`px-6 py-3 font-bold text-sm border-r border-gray-300 ${directorsBoardTab === 'hierarchy' ? 'bg-white text-[#990000] border-t-4 border-t-[#990000]' : 'text-gray-500 hover:bg-gray-200'}`}>Hierarchy</button>
+                     <div className="flex-1 flex justify-end items-center pr-4">
+                         <button onClick={() => setShowDirectorsBoard(false)}><X size={24} className="text-gray-500 hover:text-[#990000]"/></button>
+                     </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 bg-white">
+                    {directorsBoardTab === 'scene' && (
+                        <div className="space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Location & Context */}
+                                <div className="p-4 border border-gray-300 bg-gray-50">
+                                    <h4 className="font-bold text-gray-700 mb-4 flex items-center gap-2"><MapPin size={16}/> Scene Context</h4>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Active Location</label>
+                                            <input 
+                                                type="text" 
+                                                value={session.sceneState?.activeLocation || ''}
+                                                onChange={(e) => onUpdateSession({ sceneState: { ...session.sceneState, activeLocation: e.target.value } })}
+                                                className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none bg-white text-gray-900"
+                                            />
+                                        </div>
+                                        <div>
+                                             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Director Mode (Pacing)</label>
+                                             <select 
+                                                value={session.sceneState?.currentDirectorMode}
+                                                onChange={(e) => onUpdateSession({ sceneState: { ...session.sceneState, currentDirectorMode: e.target.value as DirectorMode } })}
+                                                className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none bg-white text-gray-900"
+                                             >
+                                                 {Object.values(DirectorMode).map(m => <option key={m} value={m}>{m}</option>)}
+                                             </select>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {/* Active Characters */}
+                                <div className="p-4 border border-gray-300 bg-gray-50">
+                                     <h4 className="font-bold text-gray-700 mb-4 flex items-center gap-2"><Users size={16}/> Active Characters</h4>
+                                     <div className="space-y-2 max-h-40 overflow-y-auto">
+                                         {characters.map(char => (
+                                             <label key={char.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-100 p-1">
+                                                 <input 
+                                                    type="checkbox" 
+                                                    checked={session.sceneState?.activeCharacterIds.includes(char.id)}
+                                                    onChange={(e) => {
+                                                        const currentIds = session.sceneState?.activeCharacterIds || [];
+                                                        let newIds;
+                                                        if (e.target.checked) newIds = [...currentIds, char.id];
+                                                        else newIds = currentIds.filter(id => id !== char.id);
+                                                        onUpdateSession({ sceneState: { ...session.sceneState, activeCharacterIds: newIds } });
+                                                    }}
+                                                    className="accent-[#990000]"
+                                                 />
+                                                 <span className="text-sm text-gray-800">{char.name}</span>
+                                             </label>
+                                         ))}
+                                     </div>
+                                </div>
+                            </div>
+                            
+                            {/* Consequences */}
+                            <div className="p-4 border border-gray-300 bg-gray-50">
+                                <h4 className="font-bold text-gray-700 mb-4 flex items-center gap-2"><Activity size={16}/> Active Consequences / Plot Flags</h4>
+                                <div className="space-y-2">
+                                    {session.consequences?.map(con => (
+                                        <div key={con.id} className="flex items-center gap-2 bg-white border border-gray-200 p-2">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={con.active}
+                                                onChange={(e) => {
+                                                    const updated = session.consequences.map(c => c.id === con.id ? { ...c, active: e.target.checked } : c);
+                                                    onUpdateSession({ consequences: updated });
+                                                }}
+                                                className="accent-[#990000]"
+                                            />
+                                            {editingConsequenceId === con.id ? (
+                                                <div className="flex-1 flex gap-2">
+                                                    <input 
+                                                        type="text" 
+                                                        value={editConsequenceText}
+                                                        onChange={(e) => setEditConsequenceText(e.target.value)}
+                                                        className="flex-1 border border-gray-300 p-1 text-sm bg-white text-gray-900"
+                                                    />
+                                                    <button onClick={() => handleUpdateConsequence(con.id)} className="text-green-600"><Save size={14}/></button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex-1">
+                                                    <div className="font-bold text-sm">{con.name} <span className={`text-[10px] uppercase px-1 border ${con.severity === 'Critical' ? 'border-red-500 text-red-600' : 'border-gray-300 text-gray-500'}`}>{con.severity}</span></div>
+                                                    <div className="text-xs text-gray-600">{con.description}</div>
+                                                </div>
+                                            )}
+                                            <button onClick={() => { setEditingConsequenceId(con.id); setEditConsequenceText(con.description); }} className="text-gray-400 hover:text-gray-700"><Edit2 size={14}/></button>
+                                            <button onClick={() => handleDeleteConsequence(con.id)} className="text-gray-400 hover:text-red-600"><Trash2 size={14}/></button>
+                                        </div>
+                                    ))}
+                                    {session.consequences?.length === 0 && <p className="text-gray-400 italic text-sm">No active consequences.</p>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {directorsBoardTab === 'timeline' && (
+                         <div className="space-y-4">
+                             {session.worldMeta?.timeline.map((evt, idx) => (
+                                 <div key={idx} className="flex gap-4 p-2 hover:bg-gray-50 border-b border-gray-100 last:border-0">
+                                     <div className="w-20 text-right text-sm font-bold text-gray-500">{evt.year}</div>
+                                     <div className="flex-1 border-l-2 border-gray-200 pl-4">
+                                         <p className="text-sm font-ao3-serif text-gray-800">{evt.description}</p>
+                                         <span className="text-[10px] text-gray-400 uppercase">{evt.sourceFandom}</span>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                    )}
+                    
+                     {directorsBoardTab === 'hierarchy' && (
+                         <div className="space-y-6">
+                            {Object.entries(session.worldMeta?.hierarchy || {}).map(([category, tiers]) => (
+                                <div key={category}>
+                                    <h4 className="font-bold text-[#990000] border-b border-gray-200 mb-2">{category}</h4>
+                                    <div className="space-y-2">
+                                        {tiers.map((tier, idx) => (
+                                            <div key={idx} className="flex gap-4 text-sm">
+                                                <div className="w-48 font-bold text-gray-600 bg-gray-50 p-2">{tier.tierName}</div>
+                                                <div className="flex-1 p-2 flex flex-wrap gap-2">
+                                                    {tier.entities.map((e, ei) => (
+                                                        <span key={ei} className="border border-gray-300 px-2 py-0.5 bg-white text-gray-800 font-ao3-serif">{e.name}</span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                         </div>
+                    )}
+                </div>
+             </div>
+        </div>
+      )}
+
+      {/* MODAL: WORLD INFO (NARRATIVE LOG) */}
+      {showWorldInfo && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+             <div ref={worldInfoModalRef} className="bg-white max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl rounded-none border border-gray-300">
+                <div className="p-4 border-b border-[#990000] flex justify-between items-center bg-gray-50">
+                    <h3 className="font-ao3-serif font-bold text-lg text-[#990000]">Simulation Metadata</h3>
+                    <button onClick={() => setShowWorldInfo(false)}><X size={24} className="text-gray-500 hover:text-[#990000]"/></button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 bg-white space-y-6">
+                    <div>
+                         <h4 className="font-bold text-gray-800 border-b border-gray-200 mb-2">Narrative Config</h4>
+                         <div className="grid grid-cols-2 gap-4 text-sm">
+                             <div><span className="text-gray-500">Tone:</span> <span className="font-bold">{session.config.tone}</span></div>
+                             <div><span className="text-gray-500">Style:</span> <span className="font-bold">{session.config.narrativeStructure}</span></div>
+                             <div><span className="text-gray-500">POV:</span> <span className="font-bold">{session.config.narrativePOV}</span></div>
+                             <div><span className="text-gray-500">Tense:</span> <span className="font-bold">{session.config.narrativeTense}</span></div>
+                             <div><span className="text-gray-500">Integration:</span> <span className="font-bold">{session.config.integrationMode}</span></div>
+                         </div>
+                    </div>
+                    
+                    <div>
+                        <h4 className="font-bold text-gray-800 border-b border-gray-200 mb-2">Story Events (So far)</h4>
+                        <div className="space-y-3 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
+                            {session.narrativeEvents?.map((evt, idx) => (
+                                <div key={idx} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                                    <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white bg-slate-300 group-[.is-active]:bg-[#990000] text-slate-500 group-[.is-active]:text-emerald-50 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
+                                        <Clock size={16} className="text-white"/>
+                                    </div>
+                                    <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded border border-slate-200 shadow bg-white">
+                                        <div className="flex items-center justify-between space-x-2 mb-1">
+                                            <div className="font-bold text-slate-900 text-sm">{evt.inStoryTime}</div>
+                                        </div>
+                                        <div className="text-slate-500 text-sm">{evt.description}</div>
+                                    </div>
+                                </div>
+                            ))}
+                            {(!session.narrativeEvents || session.narrativeEvents.length === 0) && <p className="text-gray-400 italic text-sm pl-8">No events recorded yet.</p>}
+                        </div>
+                    </div>
+                </div>
+             </div>
+          </div>
+      )}
     </>
   );
 };

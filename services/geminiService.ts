@@ -195,7 +195,54 @@ export const scanWikiUrl = async (input: string, model: string, focus: string, s
 };
 
 export const analyzeWikiContent = async (input: string, category: WikiEntry['category'], model: string, signal: AbortSignal, mode: 'link' | 'text' | 'search' = 'link', modifiers?: string): Promise<{ content: string; fandom?: string }> => {
-  let systemInstruction = category === 'Character' ? `Analyze and generate Character Bio. Output Format: [Emoji] [Name]...` : `Analyze content regarding ${category}. Identify Fandom. Summarize details.`;
+  let systemInstruction = "";
+  
+  if (category === 'Character') {
+      systemInstruction = `
+      You are an expert character profiler. Analyze the input and generate a highly detailed Character Dossier in the following STRICT MARKDOWN format.
+      Do not include preamble. Use the emoji that best fits the character next to the title name.
+
+      **FORMAT:**
+      [Emoji] [Name]
+
+      **Full Canon Name:** [Name]
+      **Species:** [Species]
+      **Age:** [Age/Unknown]
+      **Fandom Origin:** [Source Material]
+      **Pronouns:** [Pronouns]
+      **Gender & Orientation:** [Gender / Sexual Orientation]
+      **Status:** [Alive/Dead/Unknown + Current Status]
+
+      **Nicknames/Aliases:** [List]
+
+      **Appearance:**
+      [Detailed description of physical appearance, clothing, and distinct features]
+
+      **Backstory:**
+      [Comprehensive summary of their history, trauma, and key plot points]
+
+      **Personality:**
+      [Deep dive into their psyche, behaviors, fears, and motivations]
+
+      **Relationships:**
+      * **[Name]:** [Relationship description]
+
+      **Likes:**
+      [List]
+
+      **Dislikes:**
+      [List]
+
+      **Notes:**
+      * **Mental Health:** [If applicable]
+      * **Key Abilities:** [Powers/Skills]
+      * **Lore Note:** [Trivia/Etymology]
+      * **Inventory:** [Key items]
+      `;
+  } else {
+      systemInstruction = `Analyze content regarding ${category}. Identify Fandom. Summarize details.`;
+  }
+
   if (modifiers) systemInstruction += `\n\n**CRITICAL USER OVERRIDES:**\n${modifiers}`;
   let fullPrompt = mode === 'link' || mode === 'search' ? `${systemInstruction} \n\n Analyze content from search/link.` : `${systemInstruction} \n\n Analyze text.`;
   const ai = getAiClient();
@@ -203,7 +250,7 @@ export const analyzeWikiContent = async (input: string, category: WikiEntry['cat
     const response = await withRetry(async () => ai.models.generateContent({ model, contents: input, config: { systemInstruction: fullPrompt, tools: (mode === 'link' || mode === 'search') ? [{ googleSearch: {} }] : [] } }));
     let text = response.text || "";
     if (!text && (mode === 'link' || mode === 'search') && response.candidates?.[0]?.groundingMetadata?.groundingChunks) text = "Content extracted via search grounding.";
-    const fandomMatch = text.match(/^FANDOM:\s*(.+)$/m) || text.match(/Fandom Origin:\s*(.+)$/m);
+    const fandomMatch = text.match(/^FANDOM:\s*(.+)$/m) || text.match(/Fandom Origin:\s*(.+)$/m) || text.match(/\*\*Fandom Origin:\*\*\s*(.+)$/m);
     const contentMatch = text.match(/^CONTENT:\s*([\s\S]*)$/m);
     const fandom = fandomMatch ? fandomMatch[1].trim() : undefined;
     let content = contentMatch ? contentMatch[1].trim() : text;

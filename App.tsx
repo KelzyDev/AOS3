@@ -79,7 +79,7 @@ const INITIAL_DRAFT_CONFIG: SimulationConfig = {
   showTelltaleIndicators: true,
   showSceneHeaders: true,
   activeCharacterId: undefined,
-  // Single Fandom Defaults
+  // Single Fandom Specifics
   roleplayType: RoleplayType.CanonDivergence,
   timeEra: '',
   roleAssignments: [],
@@ -266,7 +266,6 @@ const App: React.FC = () => {
       return undefined;
   };
 
-  // ... (useEffects preserved)
   useEffect(() => {
       if (state.view === 'setup' && state.draftWorldMetaHistory.length === 0 && state.draftWikiEntries.length > DEFAULT_SYSTEM_ENTRIES.length) {
            const deterministic = extractDeterministicMeta(state.draftWikiEntries);
@@ -278,14 +277,12 @@ const App: React.FC = () => {
       }
   }, [state.draftWikiEntries, state.view]);
 
-  // (Other useEffects from original code) ...
   useEffect(() => {
     const savedSessions = localStorage.getItem(LOCAL_STORAGE_KEY);
     const savedLibrary = localStorage.getItem(LIBRARY_STORAGE_KEY);
     const savedDraft = localStorage.getItem(DRAFT_AUTOSAVE_KEY);
     const savedSettings = localStorage.getItem(SETTINGS_KEY);
     
-    // Check for Disclaimer acceptance
     const disclaimerAccepted = localStorage.getItem(DISCLAIMER_KEY);
     if (!disclaimerAccepted) {
         setShowDisclaimer(true);
@@ -293,7 +290,7 @@ const App: React.FC = () => {
     
     let simulations: SimulationSession[] = [];
     let library: WikiEntry[] = [];
-    let defaultModel = 'gemini-3-flash-preview'; // UPDATED DEFAULT
+    let defaultModel = 'gemini-3-flash-preview';
 
     if (savedSettings) {
         try {
@@ -328,16 +325,14 @@ const App: React.FC = () => {
                 };
             }
             const migratedConfig = { ...INITIAL_DRAFT_CONFIG, model: defaultModel, ...sim.config };
-            if (sim.config.userCharacterId) { // Migration
+            if (sim.config.userCharacterId) {
                 migratedConfig.activeCharacterId = sim.config.userCharacterId;
                 delete migratedConfig.userCharacterId;
             }
-            // Migrate hierarchy array to Record if needed
             let migratedWorldMeta = sim.worldMeta;
             if (migratedWorldMeta && Array.isArray(migratedWorldMeta.hierarchy)) {
                 migratedWorldMeta.hierarchy = { 'Power': migratedWorldMeta.hierarchy };
             }
-            // Migrate hierarchy strings to objects
             if (migratedWorldMeta && migratedWorldMeta.hierarchy) {
                 Object.keys(migratedWorldMeta.hierarchy).forEach(key => {
                     migratedWorldMeta.hierarchy[key].forEach((tier: any) => {
@@ -373,7 +368,6 @@ const App: React.FC = () => {
             if (window.confirm("You have an unsaved simulation draft. Would you like to restore it?")) {
                 const { draftConfig, draftWikiEntries, draftWorldMetaHistory } = JSON.parse(savedDraft);
                 const mergedConfig = { ...initialDraftConfig, ...draftConfig };
-                // Restore World Meta History if it exists
                 const restoredHistory = draftWorldMetaHistory || [];
                 
                 setState(prev => ({ 
@@ -416,7 +410,7 @@ const App: React.FC = () => {
         const autoSaveData = {
             draftConfig: state.draftConfig,
             draftWikiEntries: state.draftWikiEntries,
-            draftWorldMetaHistory: state.draftWorldMetaHistory // PERSIST WORLD META HISTORY
+            draftWorldMetaHistory: state.draftWorldMetaHistory
         };
         try {
             localStorage.setItem(DRAFT_AUTOSAVE_KEY, JSON.stringify(autoSaveData));
@@ -425,7 +419,6 @@ const App: React.FC = () => {
         }
     }
   }, [state.draftConfig, state.draftWikiEntries, state.draftWorldMetaHistory, state.view]);
-
 
   const updateDraftConfig = (key: keyof SimulationConfig, value: any) => {
     setState(prev => ({
@@ -453,12 +446,9 @@ const App: React.FC = () => {
           const entries = [...prev.draftWikiEntries];
           const draggedIdx = entries.findIndex(e => e.id === draggedId);
           const targetIdx = entries.findIndex(e => e.id === targetId);
-          
           if (draggedIdx === -1 || targetIdx === -1) return prev;
-          
           const [removed] = entries.splice(draggedIdx, 1);
           entries.splice(targetIdx, 0, removed);
-          
           return { ...prev, draftWikiEntries: entries };
       });
   };
@@ -486,14 +476,11 @@ const App: React.FC = () => {
       setState(prev => ({ ...prev, library: prev.library.filter(e => e.id !== id) }));
   };
   
-  // Accept Disclaimer Logic
   const handleAcceptDisclaimer = () => {
       localStorage.setItem(DISCLAIMER_KEY, 'true');
       setShowDisclaimer(false);
   };
 
-  // World Logic: Generation & History Management
-  
   const cancelPreviewGeneration = () => {
       if (previewAbortRef.current) {
           previewAbortRef.current.abort();
@@ -508,26 +495,17 @@ const App: React.FC = () => {
         alert("Please add at least one Fandom and one Wiki Entry/Lore to preview.");
         return;
     }
-    
-    // Cancel any ongoing generation
     cancelPreviewGeneration();
-
     setState(prev => ({ ...prev, isGenerating: true }));
     setLoadingProgress(0);
-    
     const controller = new AbortController();
     previewAbortRef.current = controller;
-
-    // Get current context if it exists to pass for enhancement
     const contextMeta = getCurrentWorldMeta();
-
-    // Determine correct modifier based on target section
     let appliedModifier = '';
     if (targetSection === 'timeline') appliedModifier = timelineModifier;
     else if (targetSection === 'hierarchy') appliedModifier = hierarchyModifier;
     else if (targetSection === 'integration') appliedModifier = integrationModifier;
     else appliedModifier = [timelineModifier, hierarchyModifier, integrationModifier].filter(m => m).join('\n');
-
 
     try {
         const worldMeta = await generateWorldMeta(
@@ -535,20 +513,16 @@ const App: React.FC = () => {
             state.draftWikiEntries, 
             controller.signal,
             (p) => setLoadingProgress(p),
-            contextMeta, // Pass current state
-            appliedModifier, // Pass user modifier
-            generationMode, // Pass current generation mode
-            targetSection // Pass specific target if any
+            contextMeta,
+            appliedModifier,
+            generationMode,
+            targetSection
         );
-        
-        // Strict Validation & Parsing
         const validatedMeta: WorldMeta = {
             timeline: Array.isArray(worldMeta.timeline) ? worldMeta.timeline : [],
             hierarchy: (worldMeta.hierarchy && typeof worldMeta.hierarchy === 'object') ? worldMeta.hierarchy : {},
             entityAdaptations: worldMeta.entityAdaptations || {}
         };
-        
-        // Merge if targeting specific section to prevent data loss (AI returns minimal if targeted)
         if (targetSection && contextMeta) {
              if (targetSection === 'timeline') {
                  validatedMeta.hierarchy = contextMeta.hierarchy;
@@ -561,8 +535,6 @@ const App: React.FC = () => {
                  validatedMeta.hierarchy = contextMeta.hierarchy;
              }
         }
-        
-        // Add to history
         setState(prev => {
             const newHistory = [...prev.draftWorldMetaHistory.slice(0, prev.draftWorldMetaIndex + 1), validatedMeta];
             return {
@@ -572,12 +544,8 @@ const App: React.FC = () => {
                 isGenerating: false
             };
         });
-        
-        // Reset hierarchy tab to first key
         const keys = Object.keys(validatedMeta.hierarchy);
         setActiveHierarchyTab(keys.length > 0 ? keys[0] : 'Power');
-
-        // Clear only used modifiers
         if (targetSection === 'timeline') setTimelineModifier('');
         else if (targetSection === 'hierarchy') setHierarchyModifier('');
         else if (targetSection === 'integration') setIntegrationModifier('');
@@ -586,7 +554,6 @@ const App: React.FC = () => {
             setHierarchyModifier('');
             setIntegrationModifier('');
         }
-
     } catch (e: any) {
         if (e.name !== 'AbortError') {
             if (e.message && (e.message.includes('429') || e.message.includes('Resource has been exhausted'))) {
@@ -604,12 +571,9 @@ const App: React.FC = () => {
   };
 
   const handleClearSection = (section: 'timeline' | 'hierarchy' | 'integration') => {
-      // Logic only, no window.confirm. The HoldButton component handles visual confirmation.
       const current = getCurrentWorldMeta();
       if (!current) return;
-      
       const updates: Partial<WorldMeta> = {};
-      
       if (section === 'timeline') {
           updates.timeline = [];
       } else if (section === 'hierarchy') {
@@ -623,14 +587,12 @@ const App: React.FC = () => {
       } else if (section === 'integration') {
           updates.entityAdaptations = {};
       }
-      
       updateWorldMeta({ ...current, ...updates });
   };
   
   const handleClearSingleAdaptation = (entryId: string) => {
        const current = getCurrentWorldMeta();
        if (!current) return;
-       
        const newAdaptations = { ...current.entityAdaptations };
        if (newAdaptations[entryId]) {
            delete newAdaptations[entryId];
@@ -653,24 +615,19 @@ const App: React.FC = () => {
       });
   };
 
-  // ... (rest of methods preserved) ...
   const handleSaveAdaptation = () => {
       if (!viewingAdaptationId || !editAdaptationValues) return;
       const current = getCurrentWorldMeta();
       if (!current) return;
-      
       const newAdaptations = { ...current.entityAdaptations };
       newAdaptations[viewingAdaptationId] = editAdaptationValues;
-      
       updateWorldMeta({ ...current, entityAdaptations: newAdaptations });
-      // Don't close modal here, allow continued editing or explicit close
   };
   
   const handleAiAdapt = async () => {
       if (!viewingAdaptationId) return;
       const entry = state.draftWikiEntries.find(e => e.id === viewingAdaptationId);
       if (!entry) return;
-      
       setIsAiAdapting(true);
       try {
           const adapted = await adaptSingleEntity(entry, state.draftConfig, aiAdaptPrompt);
@@ -684,21 +641,13 @@ const App: React.FC = () => {
       }
   };
 
-  // --- MANUAL WORLD EDITING & DND ---
-  
   const handleMoveEntity = (entityName: string, targetTierIdx: number) => {
       const current = getCurrentWorldMeta();
       if (!current) return;
-      
       const newHierarchy = JSON.parse(JSON.stringify(current.hierarchy));
       const tiers = newHierarchy[activeHierarchyTab];
-      
       if (!tiers) return;
-
-      // Find the entity object in any tier
       let entityObj: HierarchyEntity = { name: entityName, subtypes: [] };
-      
-      // Remove from old tier(s)
       tiers.forEach((tier: any) => {
           const idx = tier.entities.findIndex((e: any) => e.name === entityName);
           if (idx !== -1) {
@@ -706,12 +655,9 @@ const App: React.FC = () => {
               tier.entities.splice(idx, 1);
           }
       });
-      
-      // Add to new tier if valid index
       if (tiers[targetTierIdx]) {
         tiers[targetTierIdx].entities.push(entityObj);
       }
-      
       updateWorldMeta({ ...current, hierarchy: newHierarchy });
   };
   
@@ -725,7 +671,6 @@ const App: React.FC = () => {
        updateWorldMeta({ ...current, hierarchy: newHierarchy });
   };
 
-  // DnD: Hierarchy Entity
   const onDragStartEntity = (e: React.DragEvent, name: string, tierIdx: number) => {
       setDraggedEntity({ name, sourceTierIdx: tierIdx });
       e.dataTransfer.effectAllowed = 'move';
@@ -740,7 +685,6 @@ const App: React.FC = () => {
       }
   };
 
-  // DnD: Timeline Event
   const onDragStartTimeline = (e: React.DragEvent, index: number) => {
       setDraggedTimelineIdx(index);
       e.dataTransfer.effectAllowed = 'move';
@@ -749,75 +693,51 @@ const App: React.FC = () => {
   const onDropTimeline = (e: React.DragEvent, targetIndex: number) => {
       e.preventDefault();
       setDragOverTierIdx(null);
-      
       if (draggedTimelineIdx === null) return;
-      
-      // FIX: Ensure state is cleared even if returning early
       if (draggedTimelineIdx === targetIndex) {
           setDraggedTimelineIdx(null);
           return;
       }
-      
       const current = getCurrentWorldMeta();
       if (!current) {
           setDraggedTimelineIdx(null);
           return;
       }
-      
       const newTimeline = [...current.timeline];
       const [removed] = newTimeline.splice(draggedTimelineIdx, 1);
       newTimeline.splice(targetIndex, 0, removed);
-      
       updateWorldMeta({ ...current, timeline: newTimeline });
       setDraggedTimelineIdx(null);
   };
 
-  // Ensure drag cleanup on end
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const onDragEndTimeline = () => {
-      setDraggedTimelineIdx(null);
-      setDragOverTierIdx(null);
-  }
-
   const handleAddTimelineEvent = () => {
       if (!newEventDesc.trim()) return;
-      
       const current = getCurrentWorldMeta();
       if (!current) return;
-      
       const newEvent = {
           era: parseInt(newEventYear) > 2000 ? 'Modern' : 'Historical',
           year: newEventYear,
           description: newEventDesc,
           sourceFandom: 'Manual'
       };
-      
       const newTimeline = [...current.timeline, newEvent];
       updateWorldMeta({ ...current, timeline: newTimeline });
-      
       setNewEventYear('');
       setNewEventDesc('');
       setIsAddingEvent(false);
   };
   
-  // --- AI World Logic Assistant ---
-  
   const handleAiAssist = async () => {
       if (!aiAssistantPrompt.trim()) return;
-      
       const current = getCurrentWorldMeta();
       if (!current) return;
-      
       setIsAiAssistantThinking(true);
       const controller = new AbortController();
-      
       try {
           let targetData: any = null;
           if (previewTab === 'timeline') targetData = current.timeline;
           else if (previewTab === 'hierarchy') targetData = current.hierarchy;
           else if (previewTab === 'integration') targetData = current.entityAdaptations;
-
-          // Call Generic Service
           const result = await assistWorldLogic(
               previewTab,
               aiAssistantPrompt,
@@ -826,28 +746,21 @@ const App: React.FC = () => {
               state.draftWikiEntries,
               controller.signal
           );
-          
           if (!result) {
               alert("AI operation returned no result.");
               return;
           }
-
-          // Merge result back into meta
           const newMeta = { ...current };
           if (previewTab === 'timeline') {
               newMeta.timeline = Array.isArray(result) ? result : current.timeline;
-              // Ensure chrono sort after AI op
               newMeta.timeline.sort((a,b) => (parseInt(a.year)||0) - (parseInt(b.year)||0));
           } else if (previewTab === 'hierarchy') {
               newMeta.hierarchy = (result && typeof result === 'object') ? result : current.hierarchy;
           } else if (previewTab === 'integration') {
               newMeta.entityAdaptations = result;
           }
-          
           updateWorldMeta(newMeta);
           setAiAssistantPrompt('');
-          // AI Assistant stays open for follow-up prompts
-
       } catch (e: any) {
           console.error(e);
           if (e.message && (e.message.includes('429') || e.message.includes('Resource has been exhausted'))) {
@@ -860,11 +773,9 @@ const App: React.FC = () => {
       }
   };
   
-  // --- NEW AUTO ENHANCE FUNCTION ---
   const handleAutoEnhance = async (section: 'timeline' | 'hierarchy' | 'integration') => {
       const current = getCurrentWorldMeta();
       if (!current) return;
-      
       const prompt = `
         Review the current ${section} data.
         1. **FILL GAPS**: The input list may contain items marked "Pending". You MUST generate unique logic for these based on the Wiki Entries.
@@ -874,17 +785,14 @@ const App: React.FC = () => {
         5. ${section === 'hierarchy' ? "Ensure power tiers are balanced according to '" + state.draftConfig.powerScaling + "'." : ""}
         6. ${section === 'integration' ? "Ensure every entity has a defined Role, Status, and immersive Description." : ""}
       `;
-      
       setIsAiAssistantThinking(true);
       const controller = new AbortController();
       previewAbortRef.current = controller;
-      
       try {
            let targetData: any = null;
           if (section === 'timeline') targetData = current.timeline;
           else if (section === 'hierarchy') targetData = current.hierarchy;
           else if (section === 'integration') targetData = current.entityAdaptations;
-
           const result = await assistWorldLogic(
               section,
               prompt,
@@ -893,7 +801,6 @@ const App: React.FC = () => {
               state.draftWikiEntries,
               controller.signal
           );
-          
           if (result) {
               const newMeta = { ...current };
                if (section === 'timeline') {
@@ -919,7 +826,6 @@ const App: React.FC = () => {
       if (editingTimelineIdx === null || !editTimelineDesc.trim()) return;
       const current = getCurrentWorldMeta();
       if (!current) return;
-      
       const newTimeline = [...current.timeline];
       newTimeline[editingTimelineIdx] = { ...newTimeline[editingTimelineIdx], description: editTimelineDesc };
       updateWorldMeta({ ...current, timeline: newTimeline });
@@ -933,17 +839,14 @@ const App: React.FC = () => {
        updateWorldMeta({ ...current, timeline: newTimeline });
   };
   
-  // ... (rest of methods preserved) ...
   const handleAddRole = () => {
       if (!newRoleName.trim() || !newRoleCharId) return;
-      
       const currentRoles = state.draftConfig.roleAssignments || [];
       const newRole: RoleAssignment = {
           roleName: newRoleName,
           characterId: newRoleCharId,
           description: "Assigned by User"
       };
-      
       updateDraftConfig('roleAssignments', [...currentRoles, newRole]);
       setNewRoleName('');
       setNewRoleCharId('');
@@ -957,10 +860,8 @@ const App: React.FC = () => {
   const handleGenerateHooks = async () => {
       const fandom = state.draftConfig.fandoms[0];
       if (!fandom) { alert("Please import or set a Fandom first."); return; }
-      
       setIsGeneratingHooks(true);
       const controller = new AbortController();
-      
       try {
           const hooks = await generateScenarioHooks(
               fandom, 
@@ -987,10 +888,8 @@ const App: React.FC = () => {
       if (!state.draftConfig.worldSeed?.premise) { alert("Please define a Premise first."); return; }
       setIsGeneratingGenesis(true);
       const controller = new AbortController();
-      
       try {
           const entries = await generateWorldGenesis(state.draftConfig.worldSeed, state.draftConfig.model, controller.signal);
-          // Replace draft entries with generated ones
           setState(prev => ({ ...prev, draftWikiEntries: entries }));
       } catch(e: any) {
           console.error(e);
@@ -1002,7 +901,7 @@ const App: React.FC = () => {
 
   const resetDraft = () => {
       localStorage.removeItem(DRAFT_AUTOSAVE_KEY);
-      cancelPreviewGeneration(); // Ensure no background process
+      cancelPreviewGeneration();
       return {
           draftConfig: { ...INITIAL_DRAFT_CONFIG, model: state.defaultModel },
           draftWikiEntries: [...DEFAULT_SYSTEM_ENTRIES],
@@ -1017,10 +916,9 @@ const App: React.FC = () => {
       const draftData = {
           config: state.draftConfig,
           wikiEntries: state.draftWikiEntries,
-          worldMeta: currentMeta, // PERSIST CURRENT META IN DRAFT
+          worldMeta: currentMeta,
           lastModified: Date.now()
       };
-      
       let newSimulations = [...state.simulations];
       if (state.draftSessionId) {
           newSimulations = newSimulations.map(sim => 
@@ -1039,32 +937,24 @@ const App: React.FC = () => {
           };
           newSimulations = [newDraft, ...newSimulations];
       }
-      
       setState(prev => ({ ...prev, simulations: newSimulations, view: 'dashboard', ...resetDraft() }));
   };
 
   const handleCreateSimulation = async () => {
-    // Validation
     if (state.draftConfig.simulationType === SimulationType.OriginalUniverse) {
         if (!state.draftConfig.worldSeed?.premise) { alert("Please define a World Seed Premise."); return; }
         if (state.draftWikiEntries.length === 0) { alert("Please Execute Genesis first to generate the world lore."); return; }
     } else {
         if (state.draftConfig.fandoms.length === 0 && !state.draftConfig.hostFandom) { alert("Please add at least one Fandom or define a Custom Host Setting."); return; }
     }
-    
-    // For single fandom and original mode, enforce native integration
     if (state.draftConfig.simulationType === SimulationType.SingleFandom || state.draftConfig.simulationType === SimulationType.OriginalUniverse) {
         updateDraftConfig('integrationMode', IntegrationMode.Native);
         updateDraftConfig('worldType', WorldType.Merged);
     }
-
     let worldMeta = getCurrentWorldMeta();
-    
     if (!worldMeta) {
-         // Fallback: Use deterministic meta if none exists
          worldMeta = extractDeterministicMeta(state.draftWikiEntries);
     }
-
     const sessionData = {
         config: state.draftConfig,
         wikiEntries: state.draftWikiEntries,
@@ -1078,19 +968,15 @@ const App: React.FC = () => {
         consequences: [],
         sceneState: { activeLocation: "Start", activeCharacterIds: [], currentDirectorMode: DirectorMode.Balanced }
     };
-    
     let sessionId = state.draftSessionId;
     let newSimulations = [...state.simulations];
-
-    if (sessionId) { // Upgrading a draft
+    if (sessionId) {
         newSimulations = newSimulations.map(sim => sim.id === sessionId ? { ...sim, ...sessionData } : sim);
-    } else { // Creating a new session
+    } else {
         sessionId = crypto.randomUUID();
         newSimulations = [{ id: sessionId, ...sessionData }, ...newSimulations];
     }
-    
     if (!worldMeta) await new Promise(r => setTimeout(r, 500));
-
     setState(prev => ({
       ...prev,
       simulations: newSimulations,
@@ -1127,7 +1013,6 @@ const App: React.FC = () => {
   const handleForkSession = (messageIndex: number) => {
     const currentSession = state.simulations.find(s => s.id === state.currentSessionId);
     if (!currentSession) return;
-    
     const history: StoryNode[] = [];
     if (currentSession.messageTree && currentSession.currentLeafId) {
         let currId: string | null = currentSession.currentLeafId;
@@ -1137,7 +1022,6 @@ const App: React.FC = () => {
         }
     }
     const slicedHistory = history.slice(0, messageIndex + 1);
-
     const newTree: Record<string, StoryNode> = {};
     let lastId: string | null = null;
     slicedHistory.forEach(node => {
@@ -1146,7 +1030,6 @@ const App: React.FC = () => {
         if (lastId) newTree[lastId].childrenIds.push(newNodeId);
         lastId = newNodeId;
     });
-
     const newSession: SimulationSession = {
         ...currentSession,
         id: crypto.randomUUID(),
@@ -1156,7 +1039,6 @@ const App: React.FC = () => {
         config: { ...currentSession.config, title: `${currentSession.config.title} (Fork)` },
         status: 'active'
     };
-
     setState(prev => ({ ...prev, simulations: [newSession, ...prev.simulations], currentSessionId: newSession.id, view: 'simulation' }));
   };
 
@@ -1181,23 +1063,18 @@ const App: React.FC = () => {
   const handleImportSettingsFromFile = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-
       const reader = new FileReader();
       reader.onload = (evt) => {
           try {
               const rawText = evt.target?.result as string;
               const cleanedText = cleanFileContent(rawText);
-              
               const session = JSON.parse(cleanedText) as SimulationSession;
               if (!session.config || !session.wikiEntries) {
                   throw new Error("Invalid simulation file. Missing 'config' or 'wikiEntries'.");
               }
-
               const newConfig = { ...INITIAL_DRAFT_CONFIG, ...session.config, model: state.defaultModel };
-              
               let newHistory = state.draftWorldMetaHistory;
               let newIndex = state.draftWorldMetaIndex;
-
               if (session.worldMeta) {
                   let importedMeta = session.worldMeta;
                   if (Array.isArray(importedMeta.hierarchy)) {
@@ -1206,7 +1083,6 @@ const App: React.FC = () => {
                   newHistory = [...newHistory, importedMeta];
                   newIndex = newHistory.length - 1;
               }
-
               setState(prev => ({
                   ...prev,
                   draftConfig: newConfig,
@@ -1216,7 +1092,6 @@ const App: React.FC = () => {
               }));
               setShowImportModal(false);
               alert("Settings and World Logic imported successfully.");
-
           } catch (err) {
               alert(`Failed to import settings. ${err instanceof Error ? err.message : "Invalid format"}. Make sure the file is a valid JSON simulation export.`);
           }
@@ -1229,12 +1104,9 @@ const App: React.FC = () => {
       if (!selectedImportSimId) return;
       const session = state.simulations.find(s => s.id === selectedImportSimId);
       if (!session) return;
-
       const newConfig = { ...INITIAL_DRAFT_CONFIG, ...session.config, model: state.defaultModel };
-      
       let newHistory = state.draftWorldMetaHistory;
       let newIndex = state.draftWorldMetaIndex;
-
       if (session.worldMeta) {
           let importedMeta = session.worldMeta;
           if (Array.isArray(importedMeta.hierarchy)) {
@@ -1243,7 +1115,6 @@ const App: React.FC = () => {
           newHistory = [...newHistory, importedMeta];
           newIndex = newHistory.length - 1;
       }
-
       setState(prev => ({
           ...prev,
           draftConfig: newConfig,
@@ -1275,10 +1146,8 @@ const App: React.FC = () => {
           try {
               const rawText = evt.target?.result as string;
               const cleanedText = cleanFileContent(rawText);
-              
               const session = JSON.parse(cleanedText);
               if (!session.config || !session.id) throw new Error("Invalid simulation file");
-              
               const migratedConfig = { ...INITIAL_DRAFT_CONFIG, ...session.config };
               const newSession = { 
                   ...session, 
@@ -1290,7 +1159,6 @@ const App: React.FC = () => {
                   consequences: session.consequences || [],
                   sceneState: session.sceneState || { activeLocation: "Imported", activeCharacterIds: [], currentDirectorMode: DirectorMode.Balanced }
               };
-              
               if (newSession.messages && !newSession.messageTree) {
                    const tree: Record<string, StoryNode> = {};
                     let lastId: string | null = null;
@@ -1345,7 +1213,6 @@ const App: React.FC = () => {
     return currentHostValue;
   }, [currentHostValue, hostOptions]);
 
-  // --- VIEW: LOADING WORLD ---
   if (state.view === 'building_world') {
      return (
         <div className="flex flex-col items-center justify-center min-h-screen bg-white font-ao3-sans">
@@ -1374,7 +1241,6 @@ const App: React.FC = () => {
             <DisclaimerModal onClose={handleAcceptDisclaimer} />
         )}
         
-        {/* Import Modal */}
         {showImportModal && (
             <div ref={importModalRef} className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white p-6 shadow-xl max-w-md w-full rounded-none border border-gray-300">
@@ -1414,11 +1280,8 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* ... (Previous code remains the same) ... */}
-        {/* --- VIEW: DASHBOARD & SETUP --- */}
         {state.view === 'dashboard' && (
             <div className="max-w-5xl mx-auto p-4 md:p-8">
-                {/* ... (Dashboard code remains the same) ... */}
                 <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 bg-[#990000] p-6 text-white shadow-md">
                     <div className="flex items-center gap-4">
                          <div>
@@ -1480,7 +1343,6 @@ const App: React.FC = () => {
                             <div className="text-xs text-gray-500 mb-4 flex items-center gap-1 font-ao3-sans">
                                 <Clock size={12}/> Last updated: {new Date(sim.lastModified).toLocaleDateString()}
                             </div>
-                            
                             <div className="flex items-center gap-2 mt-auto pt-3 border-t border-gray-100">
                                 <button onClick={() => handleOpenSimulation(sim.id)} className="flex-1 bg-gray-100 border border-gray-300 text-gray-700 font-bold py-2 text-sm hover:bg-gray-200 hover:text-gray-900 rounded-none transition-colors">
                                     Open
@@ -1492,7 +1354,6 @@ const App: React.FC = () => {
                                     <Download size={16} />
                                 </button>
                             </div>
-                            
                             <div className="absolute top-4 right-4">
                                 <HoldToDeleteButton onDelete={() => handleDeleteSimulation(sim.id)} className="text-gray-300 hover:text-red-500 p-1 rounded-none" />
                             </div>
@@ -1517,7 +1378,6 @@ const App: React.FC = () => {
 
         {state.view === 'setup' && (
             <div className="flex flex-col h-screen font-ao3-sans">
-                {/* ... (Header code) ... */}
                 <header className="bg-[#990000] border-b border-[#770000] p-4 flex items-center justify-between shadow-md z-10 text-white">
                     <div className="flex items-center gap-4">
                         <button onClick={() => setState(prev => ({ ...prev, view: 'dashboard' }))} className="text-white/80 hover:text-white transition-colors"><ArrowLeft size={24}/></button>
@@ -1525,7 +1385,6 @@ const App: React.FC = () => {
                             {state.draftSessionId ? "Edit Simulation" : "New Simulation"}
                         </h1>
                     </div>
-                    {/* Setup Mode Toggle */}
                     <div className="flex items-center bg-[#770000] rounded-none border border-[#550000]">
                          <button 
                             onClick={() => updateDraftConfig('simulationType', SimulationType.Multifandom)}
@@ -1565,10 +1424,8 @@ const App: React.FC = () => {
                 </header>
 
                 <div className="flex-1 overflow-hidden flex flex-col md:flex-row bg-gray-100">
-                    {/* ... (Left Panel) ... */}
                     <div className="w-full md:w-1/2 lg:w-5/12 overflow-y-auto p-6 border-r border-gray-300 bg-white">
                         <div className="space-y-6 max-w-2xl mx-auto">
-                            {/* ... (Inputs) ... */}
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-1">Title</label>
                                 <input 
@@ -1579,9 +1436,6 @@ const App: React.FC = () => {
                                     className="w-full p-2 border border-gray-300 font-ao3-serif text-lg bg-white focus:border-[#990000] outline-none rounded-none shadow-inner"
                                 />
                             </div>
-                            
-                            {/* ... (Skipping verbose repeated code for brevity where unchanged, focusing on structure) ... */}
-                            {/* ... Multiverse / Single / Original Configs ... */}
                             {state.draftConfig.simulationType === SimulationType.Multifandom && (
                                 <>
                                     <TagInput 
@@ -1592,7 +1446,6 @@ const App: React.FC = () => {
                                         placeholder="Add fandom (e.g. Star Wars, Marvel)..."
                                         className="rounded-none"
                                     />
-                                    {/* ... rest of multifandom config ... */}
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-sm font-bold text-gray-700 mb-1">World Type</label>
@@ -1621,7 +1474,6 @@ const App: React.FC = () => {
                                             </select>
                                         </div>
                                     </div>
-                                    
                                     <div>
                                         <label className="block text-sm font-bold text-gray-700 mb-1">Host Fandom / Setting</label>
                                         <select 
@@ -1653,8 +1505,6 @@ const App: React.FC = () => {
                                     </div>
                                 </>
                             )}
-                            
-                            {/* ... (Single Fandom) ... */}
                             {state.draftConfig.simulationType === SimulationType.SingleFandom && (
                                 <>
                                     <div>
@@ -1668,7 +1518,6 @@ const App: React.FC = () => {
                                         />
                                         <p className="text-xs text-gray-500 mt-1">Add a character/wiki entry on the right to auto-detect fandom.</p>
                                     </div>
-
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-sm font-bold text-gray-700 mb-1">Roleplay Type</label>
@@ -1694,7 +1543,6 @@ const App: React.FC = () => {
                                             />
                                         </div>
                                     </div>
-                                    {/* Role Assignments Logic (Skipped for brevity) */}
                                     <div className="bg-gray-50 border border-gray-300 p-4 rounded-none">
                                         <h3 className="font-bold text-[#990000] mb-3 flex items-center gap-2 border-b border-gray-200 pb-2">
                                             <Users size={16}/> Role Casting
@@ -1735,7 +1583,6 @@ const App: React.FC = () => {
                                             <button onClick={handleAddRole} className="bg-gray-800 text-white px-3 font-bold hover:bg-gray-900 rounded-none"><Plus size={16}/></button>
                                         </div>
                                     </div>
-                                    {/* Scenario Generator Logic (Skipped for brevity) */}
                                     <div className="bg-blue-50 border border-blue-200 p-4 rounded-none">
                                         <div className="flex justify-between items-center mb-3">
                                             <h3 className="font-bold text-blue-800 flex items-center gap-2">
@@ -1749,7 +1596,6 @@ const App: React.FC = () => {
                                                 {isGeneratingHooks ? "Generating..." : "Generate Ideas"}
                                             </button>
                                         </div>
-                                        
                                         {scenarioHooks.length > 0 && (
                                             <div className="space-y-2">
                                                 {scenarioHooks.map((hook, i) => (
@@ -1767,8 +1613,6 @@ const App: React.FC = () => {
                                     </div>
                                 </>
                             )}
-
-                            {/* ... (Original Universe) ... */}
                             {state.draftConfig.simulationType === SimulationType.OriginalUniverse && (
                                 <div className="space-y-4">
                                     <div className="bg-purple-50 border border-purple-200 p-4 rounded-none">
@@ -1786,7 +1630,6 @@ const App: React.FC = () => {
                                                     className="w-full p-2 border border-gray-300 bg-white rounded-none focus:border-purple-600 outline-none"
                                                 />
                                             </div>
-                                            
                                             <div className="grid grid-cols-2 gap-4">
                                                 <div>
                                                     <label className="block text-sm font-bold text-gray-700 mb-1">Magic Level</label>
@@ -1816,7 +1659,6 @@ const App: React.FC = () => {
                                                     </select>
                                                 </div>
                                             </div>
-
                                             <div>
                                                 <label className="block text-sm font-bold text-gray-700 mb-1">The Premise (World Seed)</label>
                                                 <textarea 
@@ -1826,7 +1668,6 @@ const App: React.FC = () => {
                                                     className="w-full p-2 border border-gray-300 bg-white rounded-none focus:border-purple-600 outline-none h-24"
                                                 />
                                             </div>
-
                                             <button 
                                                 onClick={handleExecuteGenesis}
                                                 disabled={isGeneratingGenesis || !state.draftConfig.worldSeed?.premise}
@@ -1835,20 +1676,14 @@ const App: React.FC = () => {
                                                 {isGeneratingGenesis ? <Loader2 className="animate-spin" size={18}/> : <Sparkles size={18}/>}
                                                 Generate World Bible
                                             </button>
-                                            <p className="text-xs text-purple-700 mt-1 italic text-center">
-                                                This will replace current entries with 6 foundational world lore entries.
-                                            </p>
                                         </div>
                                     </div>
                                 </div>
                             )}
 
-                            {/* ... (Advanced Logic Section) ... */}
                             <div className="p-4 bg-gray-50 border border-gray-300 rounded-none">
                                 <h3 className="font-bold text-[#990000] mb-3 flex items-center gap-2 border-b border-gray-300 pb-2"> <Settings2 size={16} /> Advanced Logic </h3>
-                                {/* ... (Logic Settings inputs) ... */}
                                 <div className="space-y-4">
-                                    {/* Actor Role Selection */}
                                     {state.draftConfig.simulationMode === SimulationMode.Actor && (
                                         <div className="bg-red-50 border border-red-200 p-3 mb-2 rounded-none">
                                             <label className="block text-xs font-bold text-red-800 uppercase mb-1 flex items-center gap-1">
@@ -1857,7 +1692,7 @@ const App: React.FC = () => {
                                             <select 
                                                 value={state.draftConfig.activeCharacterId || ''}
                                                 onChange={(e) => updateDraftConfig('activeCharacterId', e.target.value)}
-                                                className="w-full p-2 border border-red-200 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner"
+                                                className="w-full p-2 border border-red-200 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner text-gray-900"
                                             >
                                                 <option value="">None / Observer</option>
                                                 {state.draftWikiEntries.filter(e => e.category === 'Character').map(c => (
@@ -1866,24 +1701,23 @@ const App: React.FC = () => {
                                             </select>
                                         </div>
                                     )}
-
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Point of View</label>
-                                            <select value={state.draftConfig.narrativePOV} onChange={(e) => updateDraftConfig('narrativePOV', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner">
+                                            <select value={state.draftConfig.narrativePOV} onChange={(e) => updateDraftConfig('narrativePOV', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none shadow-inner">
                                                 {Object.values(NarrativePOV).map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
                                             </select>
                                         </div>
                                         <div>
                                             <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Narrative Tense</label>
-                                            <select value={state.draftConfig.narrativeTense} onChange={(e) => updateDraftConfig('narrativeTense', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner">
+                                            <select value={state.draftConfig.narrativeTense} onChange={(e) => updateDraftConfig('narrativeTense', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none shadow-inner">
                                                 {Object.values(NarrativeTense).map(t => <option key={t} value={t}>{t}</option>)}
                                             </select>
                                         </div>
                                     </div>
                                     <div>
                                         <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Narrative Tone</label>
-                                        <select value={state.draftConfig.tone} onChange={(e) => updateDraftConfig('tone', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner">
+                                        <select value={state.draftConfig.tone} onChange={(e) => updateDraftConfig('tone', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none shadow-inner">
                                             {Object.values(ToneType).map(t => <option key={t} value={t}>{t === ToneType.CUSTOM ? "Custom..." : t.replace(/_/g, ' ')}</option>)}
                                         </select>
                                         {state.draftConfig.tone === ToneType.CUSTOM && (
@@ -1892,30 +1726,22 @@ const App: React.FC = () => {
                                                 value={state.draftConfig.customTone || ''}
                                                 onChange={(e) => updateDraftConfig('customTone', e.target.value)}
                                                 placeholder="e.g. Hopeful Melancholy, 80s Cyberpunk..."
-                                                className="w-full p-2 mt-2 border border-gray-300 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner"
+                                                className="w-full p-2 mt-2 border border-gray-300 text-sm bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none shadow-inner"
                                             />
                                         )}
-                                        <p className="text-[10px] text-gray-500 mt-1">Sets the mood (e.g., Angst, Fluff, Horror).</p>
                                     </div>
                                     <div>
                                         <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Canon Strictness</label>
-                                        <select value={state.draftConfig.canonStrictness} onChange={(e) => updateDraftConfig('canonStrictness', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner">
+                                        <select value={state.draftConfig.canonStrictness} onChange={(e) => updateDraftConfig('canonStrictness', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none shadow-inner">
                                             {Object.values(CanonStrictness).map(t => <option key={t} value={t}>{t}</option>)}
                                         </select>
-                                        <p className="text-[10px] text-gray-500 mt-1">
-                                            {state.draftConfig.canonStrictness === CanonStrictness.Strict ? "Characters act exactly as canon." : (state.draftConfig.simulationType === SimulationType.OriginalUniverse ? "Consistent with generated lore." : "Allows deviation for plot needs.")}
-                                        </p>
                                     </div>
                                      <div>
                                         <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Power Scaling</label>
-                                        <select value={state.draftConfig.powerScaling} onChange={(e) => updateDraftConfig('powerScaling', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white rounded-none focus:border-[#990000] outline-none shadow-inner">
+                                        <select value={state.draftConfig.powerScaling} onChange={(e) => updateDraftConfig('powerScaling', e.target.value)} className="w-full p-2 border border-gray-300 text-sm bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none shadow-inner">
                                             {Object.values(PowerScaling).map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
                                         </select>
-                                        <p className="text-[10px] text-gray-500 mt-1">
-                                            {state.draftConfig.powerScaling === PowerScaling.Balanced ? "Nerfs OP characters for fair conflict." : "Gods remain Gods (Lore Accurate)."}
-                                        </p>
                                     </div>
-                                    
                                     <div className="flex items-start gap-2 pt-2 border-t border-gray-200 mt-2">
                                         <input 
                                             type="checkbox" 
@@ -1926,10 +1752,8 @@ const App: React.FC = () => {
                                         />
                                         <div>
                                             <label htmlFor="telltale-toggle" className="block text-xs font-bold text-gray-600 uppercase cursor-pointer">Telltale Indicators</label>
-                                            <p className="text-[10px] text-gray-500">Show indicators like "X will remember that."</p>
                                         </div>
                                     </div>
-
                                     <div className="flex items-start gap-2 pt-2 mt-2">
                                         <input 
                                             type="checkbox" 
@@ -1940,11 +1764,8 @@ const App: React.FC = () => {
                                         />
                                         <div>
                                             <label htmlFor="scene-header-toggle" className="block text-xs font-bold text-gray-600 uppercase cursor-pointer">Show Scene Headings</label>
-                                            <p className="text-[10px] text-gray-500">Display Location, Time, and Date at start of messages.</p>
                                         </div>
                                     </div>
-
-                                    {/* Mode Toggle inside Advanced Logic */}
                                     <div className="flex items-center justify-between border-t border-gray-200 pt-3">
                                         <span className="text-xs font-bold text-gray-600 uppercase">Default Mode</span>
                                         <div className="flex items-center bg-gray-200 rounded-none overflow-hidden">
@@ -1964,20 +1785,18 @@ const App: React.FC = () => {
                                     </div>
                                 </div>
                             </div>
-                            
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-1">World Rules / Modifiers</label>
                                 <textarea 
                                     value={state.draftConfig.modifiers}
                                     onChange={(e) => updateDraftConfig('modifiers', e.target.value)}
                                     placeholder={state.draftConfig.simulationType === SimulationType.SingleFandom ? "Scenario Hook goes here..." : "e.g. There is no magic here. Everyone is a teenager. It is always raining."}
-                                    className="w-full p-2 border border-gray-300 h-24 bg-white focus:border-[#990000] outline-none text-sm rounded-none shadow-inner"
+                                    className="w-full p-2 border border-gray-300 h-24 bg-white text-gray-900 focus:border-[#990000] outline-none text-sm rounded-none shadow-inner"
                                 />
                             </div>
                         </div>
                     </div>
 
-                    {/* Right Panel: Wiki & Import */}
                     <div className="w-full md:w-1/2 lg:w-7/12 flex flex-col bg-gray-50">
                         <div className="flex-1 overflow-y-auto p-6">
                            <WikiImporter 
@@ -1994,8 +1813,6 @@ const App: React.FC = () => {
                                 onAddToLibrary={handleAddToLibrary}
                                 onRemoveFromLibrary={handleRemoveFromLibrary}
                            />
-                           
-                           {/* World Logic Preview (Only show in Multifandom for now, or simplify for single) */}
                            <div className="mt-8 border-t border-gray-300 pt-6">
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="font-ao3-serif text-xl font-bold text-gray-800">World Logic Preview</h3>
@@ -2011,16 +1828,13 @@ const App: React.FC = () => {
                                         </select>
                                     </div>
                                 </div>
-                                
                                 <div className="bg-white border border-gray-300 rounded-none shadow-sm overflow-hidden">
                                     <div className="flex border-b border-gray-200 bg-gray-100">
                                         <button onClick={() => setPreviewTab('integration')} className={`flex-1 py-2 text-sm font-bold border-r border-gray-200 ${previewTab === 'integration' ? 'bg-white text-[#990000] border-t-2 border-t-[#990000] border-r-transparent' : 'text-gray-600 hover:bg-gray-200'}`}>Integration</button>
                                         <button onClick={() => setPreviewTab('timeline')} className={`flex-1 py-2 text-sm font-bold border-r border-gray-200 ${previewTab === 'timeline' ? 'bg-white text-[#990000] border-t-2 border-t-[#990000] border-r-transparent' : 'text-gray-600 hover:bg-gray-200'}`}>Timeline</button>
                                         <button onClick={() => setPreviewTab('hierarchy')} className={`flex-1 py-2 text-sm font-bold ${previewTab === 'hierarchy' ? 'bg-white text-[#990000] border-t-2 border-t-[#990000]' : 'text-gray-600 hover:bg-gray-200'}`}>Hierarchy</button>
                                     </div>
-                                    
                                     <div className="p-4 min-h-[300px] max-h-[500px] overflow-y-auto relative">
-                                        {/* Modifiers for AI Generation */}
                                         <div className="mb-4 bg-gray-50 p-3 rounded-none border border-gray-200">
                                             <div className="flex gap-2">
                                                 <div className="flex-1 relative">
@@ -2034,7 +1848,7 @@ const App: React.FC = () => {
                                                             else if (previewTab === 'hierarchy') setHierarchyModifier(val);
                                                             else setIntegrationModifier(val);
                                                         }}
-                                                        className="w-full p-2 pr-8 text-sm border border-gray-300 bg-white rounded-none focus:border-[#990000] outline-none"
+                                                        className="w-full p-2 pr-8 text-sm border border-gray-300 bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none"
                                                     />
                                                     {(previewTab === 'timeline' ? timelineModifier : previewTab === 'hierarchy' ? hierarchyModifier : integrationModifier) && (
                                                         <button 
@@ -2059,8 +1873,6 @@ const App: React.FC = () => {
                                                 </button>
                                             </div>
                                         </div>
-
-                                        {/* Content Area */}
                                         {previewTab === 'timeline' && currentWorldMeta && (
                                             <div className="space-y-4">
                                                 {currentWorldMeta.timeline.map((evt, idx) => (
@@ -2082,7 +1894,7 @@ const App: React.FC = () => {
                                                                     <textarea 
                                                                         value={editTimelineDesc}
                                                                         onChange={e => setEditTimelineDesc(e.target.value)}
-                                                                        className="w-full p-2 border border-gray-300 text-sm bg-white rounded-none"
+                                                                        className="w-full p-2 border border-gray-300 text-sm bg-white text-gray-900 rounded-none"
                                                                     />
                                                                     <button onClick={handleEditTimelineEvent} className="text-green-600 hover:text-green-800"><Save size={14}/></button>
                                                                 </div>
@@ -2099,7 +1911,6 @@ const App: React.FC = () => {
                                                         </div>
                                                     </div>
                                                 ))}
-                                                {/* Manual Add Event */}
                                                 {!isAddingEvent ? (
                                                      <button onClick={() => setIsAddingEvent(true)} className="flex items-center gap-1 text-xs text-gray-500 hover:text-[#990000] mt-2 font-bold ml-20">
                                                         <Plus size={12}/> Add Event
@@ -2111,13 +1922,13 @@ const App: React.FC = () => {
                                                             placeholder="Year" 
                                                             value={newEventYear} 
                                                             onChange={e => setNewEventYear(e.target.value)}
-                                                            className="w-16 p-1 text-xs border border-gray-300 rounded-none"
+                                                            className="w-16 p-1 text-xs border border-gray-300 rounded-none bg-white text-gray-900"
                                                         />
                                                         <textarea 
                                                             placeholder="Description"
                                                             value={newEventDesc}
                                                             onChange={e => setNewEventDesc(e.target.value)}
-                                                            className="flex-1 p-1 text-xs border border-gray-300 rounded-none"
+                                                            className="flex-1 p-1 text-xs border border-gray-300 rounded-none bg-white text-gray-900"
                                                         />
                                                         <button onClick={handleAddTimelineEvent} className="text-[#990000] hover:text-[#770000]"><Plus size={16}/></button>
                                                         <button onClick={() => setIsAddingEvent(false)} className="text-gray-400 hover:text-gray-600"><X size={16}/></button>
@@ -2125,7 +1936,6 @@ const App: React.FC = () => {
                                                 )}
                                             </div>
                                         )}
-
                                         {previewTab === 'hierarchy' && currentWorldMeta && (
                                             <div>
                                                 <div className="flex gap-1 mb-4 border-b border-gray-200">
@@ -2169,13 +1979,11 @@ const App: React.FC = () => {
                                                 </div>
                                             </div>
                                         )}
-
                                         {previewTab === 'integration' && currentWorldMeta && (
                                             <div className="space-y-0">
                                                 {state.draftWikiEntries.map(entry => {
                                                     const adaptation = currentWorldMeta.entityAdaptations?.[entry.id];
                                                     const hasAdaptation = !!adaptation;
-                                                    
                                                     return (
                                                         <div key={entry.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors group">
                                                             <div 
@@ -2211,12 +2019,9 @@ const App: React.FC = () => {
                                                         </div>
                                                     );
                                                 })}
-                                                {state.draftWikiEntries.length === 0 && <p className="text-gray-400 italic text-center p-4">Add wiki entries to see integration list.</p>}
                                             </div>
                                         )}
                                     </div>
-                                    
-                                    {/* Action Bar */}
                                     <div className="bg-gray-100 p-2 border-t border-gray-200 flex justify-between items-center text-xs">
                                          <div className="flex gap-2">
                                             <button onClick={() => handleWorldHistoryNav('prev')} disabled={state.draftWorldMetaIndex <= 0} className="p-1 hover:text-gray-800 disabled:opacity-30"><Undo size={14}/></button>
@@ -2235,8 +2040,6 @@ const App: React.FC = () => {
                                              </HoldToDeleteButton>
                                          </div>
                                     </div>
-
-                                    {/* AI Assistant Panel */}
                                     {showAiAssistant && (
                                         <div className="border-t border-gray-300 bg-gray-50 p-3">
                                             <label className="block text-xs font-bold text-[#990000] mb-1">AI World Logic Assistant ({previewTab})</label>
@@ -2245,7 +2048,7 @@ const App: React.FC = () => {
                                                     value={aiAssistantPrompt} 
                                                     onChange={e => setAiAssistantPrompt(e.target.value)}
                                                     placeholder={`Ask to modify ${previewTab}... (e.g. "Add a war in 1999", "Make X stronger")`}
-                                                    className="flex-1 p-2 text-sm border border-gray-300 rounded-none focus:border-[#990000] outline-none resize-y"
+                                                    className="flex-1 p-2 text-sm border border-gray-300 bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none resize-y"
                                                     rows={2}
                                                     onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAiAssist(); } }}
                                                 />
@@ -2267,7 +2070,6 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* --- VIEW: SIMULATION --- */}
         {state.view === 'simulation' && currentSession && (
             <SimulationReader 
                 session={currentSession}
@@ -2283,7 +2085,6 @@ const App: React.FC = () => {
             />
         )}
         
-        {/* --- MODAL: INTEGRATION DETAIL --- */}
         {viewingAdaptationId && (
             <div ref={integrationDetailRef} className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white max-w-lg w-full rounded-none shadow-2xl border border-gray-400">
@@ -2293,15 +2094,13 @@ const App: React.FC = () => {
                         </h3>
                         <button onClick={() => setViewingAdaptationId(null)}><X size={20} className="text-gray-500 hover:text-[#990000]"/></button>
                     </div>
-                    
                     <div className="p-6 space-y-4">
-                        {/* Auto-Adapt Button */}
                         <div className="bg-blue-50 p-3 border border-blue-100 flex gap-2 rounded-none mb-4 items-start">
                              <textarea 
                                 value={aiAdaptPrompt}
                                 onChange={e => setAiAdaptPrompt(e.target.value)}
                                 placeholder="Instructions (e.g. 'Make them a villain')"
-                                className="flex-1 text-sm p-2 border border-blue-200 outline-none rounded-none resize-none"
+                                className="flex-1 text-sm p-2 border border-blue-200 bg-white text-gray-900 outline-none rounded-none resize-none"
                                 rows={2}
                                 onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAiAdapt(); } }}
                              />
@@ -2313,7 +2112,6 @@ const App: React.FC = () => {
                                  {isAiAdapting ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>} Auto
                              </button>
                         </div>
-
                         {(() => {
                             const entry = state.draftWikiEntries.find(e => e.id === viewingAdaptationId);
                             const existing = currentWorldMeta?.entityAdaptations?.[viewingAdaptationId!] || {
@@ -2324,13 +2122,10 @@ const App: React.FC = () => {
                                 whereabouts: '',
                                 description: ''
                             };
-                            
-                            // Initialize local edit state if not set
                             if (!editAdaptationValues || editAdaptationValues.entryId !== viewingAdaptationId) {
                                 setEditAdaptationValues(existing);
-                                return null; // Wait for re-render with state set
+                                return null;
                             }
-
                             return (
                                 <div className="space-y-3">
                                     <div>
@@ -2338,7 +2133,7 @@ const App: React.FC = () => {
                                         <textarea 
                                             value={editAdaptationValues.adaptedName}
                                             onChange={e => setEditAdaptationValues({...editAdaptationValues!, adaptedName: e.target.value})}
-                                            className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm font-bold resize-y"
+                                            className="w-full p-2 border border-gray-300 bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none text-sm font-bold resize-y"
                                             rows={1}
                                         />
                                     </div>
@@ -2348,7 +2143,7 @@ const App: React.FC = () => {
                                             <textarea 
                                                 value={editAdaptationValues.role}
                                                 onChange={e => setEditAdaptationValues({...editAdaptationValues!, role: e.target.value})}
-                                                className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
+                                                className="w-full p-2 border border-gray-300 bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
                                                 rows={1}
                                             />
                                         </div>
@@ -2357,7 +2152,7 @@ const App: React.FC = () => {
                                             <textarea 
                                                 value={editAdaptationValues.status}
                                                 onChange={e => setEditAdaptationValues({...editAdaptationValues!, status: e.target.value})}
-                                                className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
+                                                className="w-full p-2 border border-gray-300 bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
                                                 rows={1}
                                             />
                                         </div>
@@ -2367,7 +2162,7 @@ const App: React.FC = () => {
                                         <textarea 
                                             value={editAdaptationValues.whereabouts}
                                             onChange={e => setEditAdaptationValues({...editAdaptationValues!, whereabouts: e.target.value})}
-                                            className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
+                                            className="w-full p-2 border border-gray-300 bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none text-sm resize-y"
                                             rows={1}
                                         />
                                     </div>
@@ -2376,7 +2171,7 @@ const App: React.FC = () => {
                                         <textarea 
                                             value={editAdaptationValues.description}
                                             onChange={e => setEditAdaptationValues({...editAdaptationValues!, description: e.target.value})}
-                                            className="w-full p-2 border border-gray-300 rounded-none focus:border-[#990000] outline-none text-sm h-32 resize-y"
+                                            className="w-full p-2 border border-gray-300 bg-white text-gray-900 rounded-none focus:border-[#990000] outline-none text-sm h-32 resize-y"
                                             placeholder="How do they fit into this world?"
                                         />
                                     </div>
@@ -2384,7 +2179,6 @@ const App: React.FC = () => {
                             );
                         })()}
                     </div>
-                    
                     <div className="p-4 bg-gray-50 border-t border-gray-300 flex justify-end gap-2">
                         <button onClick={() => setViewingAdaptationId(null)} className="px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-200 rounded-none">Cancel</button>
                         <button onClick={() => { handleSaveAdaptation(); setViewingAdaptationId(null); }} className="px-4 py-2 text-sm font-bold bg-[#990000] text-white hover:bg-[#770000] rounded-none shadow-sm">Save Changes</button>
